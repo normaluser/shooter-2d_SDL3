@@ -77,7 +77,7 @@ begin
   loadTexture := IMG_LoadTexture(app.Renderer, PChar(Pfad));
   if loadTexture = NIL then errorMessage(SDL_GetError());
   Fmt := 'Loading %s'#13;
-  SDL_Log(Fmt, PChar(Pfad));
+  SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO,  Fmt, PChar(Pfad));
 end;
 
 procedure prepareScene;
@@ -132,7 +132,8 @@ begin
   while SDL_PollEvent(@Event) do
   begin
     CASE Event._Type of
-      SDL_EVENT_QUIT:          exitLoop := TRUE;        { close Window }
+      SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
+      SDL_EVENT_MOUSE_BUTTON_DOWN: exitloop := TRUE;
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;
