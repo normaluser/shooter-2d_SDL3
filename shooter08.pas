@@ -21,60 +21,63 @@ The original source and a lot of explanations can be found at:
 https://www.parallelrealities.co.uk/tutorials/#Shooter
 converted from "C" to "Pascal" by Ulrich 2021
 ***************************************************************************
-*** Shooting enemies
-*** without memory holes; tested with: fpc -Criot -gl -gh shooter07.pas
+*** Enemies shoot back!
+*** without memory holes; tested with: fpc -Criot -gl -gh shooter08.pas
 ***************************************************************************}
 
-PROGRAM Shooter07;
+PROGRAM Shooter08;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
-USES SDL3, SDL3_Image, math;
+USES SDL3, SDL3_Image, Math;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SCREEN_HEIGHT = 720;             { size of the grafic window }
       PLAYER_SPEED  = 4;
       PLAYER_BULLET_SPEED = 20.0;
+      ALIEN_BULLET_SPEED = 8;
       RAND_MAX = 3276;
       MAX_KEYBOARD_KEYS = 350;
       SIDE_PLAYER = 0;
       SIDE_ALIEN = 1;
       FPS = 60;
 
-TYPE TDelegating    = Procedure;            { "T" short for "TYPE" }
-     TDelegate      = RECORD
-                        logic, draw : TDelegating;
-                      end;
-     TApp           = RECORD
-                        Window   : PSDL_Window;
-                        Renderer : PSDL_Renderer;
-                        keyboard : ARRAY[0..MAX_KEYBOARD_KEYS] OF integer;
-                        delegate : TDelegate;
-                      end;
-     PEntity        = ^TEntity;
-     TEntity        = RECORD
-                        x, y, dx, dy : double;
-                        w, h, health, reload, side : integer;
-                        Texture : PSDL_Texture;
-                        next : PEntity;
-                      end;
-     TStage         = RECORD
-                        fighterHead, fighterTail,
-                        bulletHead, bulletTail : PEntity;
-                      end;
+TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
+     TDelegate   = RECORD
+                     logic, draw : TDelegating;
+                   end;
+     TApp        = RECORD
+                     Window   : PSDL_Window;
+                     Renderer : PSDL_Renderer;
+                     keyboard : ARRAY[0..MAX_KEYBOARD_KEYS] OF integer;
+                     delegate : TDelegate;
+                   end;
+     PEntity     = ^TEntity;
+     TEntity     = RECORD
+                     x, y, dx, dy : double;
+                     w, h, health, reload, side : integer;
+                     Texture : PSDL_Texture;
+                     next : PEntity;
+                   end;
+     TStage      = RECORD
+                     fighterHead, fighterTail,
+                     bulletHead,  bulletTail : PEntity;
+                   end;
 
-VAR app             : TApp;
-    stage           : TStage;
+VAR app                  : TApp;
+    stage                : TStage;
     player,
     enemy,
-    bullet          : PEntity;
-    CachePlayerTex,
-    CacheEnemyTex,
-    CacheBulletTex  : PSDL_Texture;
-    Event           : TSDL_EVENT;
-    exitLoop        : BOOLEAN;
-    gTicks          : UInt32;
-    gRemainder      : double;
-    enemyspawnTimer : integer;
+    bullet               : PEntity;
+    enemyTexture,
+    bulletTexture,
+    alienbulletTexture,
+    playerTexture        : PSDL_Texture;
+    Event                : TSDL_EVENT;
+    exitLoop             : BOOLEAN;
+    gTicks               : UInt32;
+    gRemainder           : double;
+    enemyspawnTimer,
+    resetTimer           : integer;
 
 // *****************   INIT   *****************
 
@@ -98,6 +101,24 @@ end;  }
 function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : Boolean;
 begin
   collision := (MAX(x1, x2) < MIN(x1 + w1, x2 + w2)) AND (MAX(y1, y2) < MIN(y1 + h1, y2 + h2));
+end;
+
+procedure calcSlope(x1, y1, x2, y2 : integer; VAR dx, dy : double);
+VAR steps : integer;
+begin
+  steps := MAX(ABS(x1-x2), ABS(y1-y2));
+  if steps = 0 then
+  begin
+    dx := 0;
+    dy := 0;
+  end
+  else
+  begin
+    dx := x1 - x2;
+    dx := dx / steps;
+    dy := y1 - y2;
+    dy := dy / steps;
+  end;
 end;
 
 procedure errorMessage(Message1 : String);
@@ -167,6 +188,17 @@ begin
   drawBullets;
 end;
 
+procedure clipPlayer;
+begin
+  if player <> NIL then
+  begin
+    if (player^.x < 0) then player^.x := 0;
+    if (player^.y < 0) then player^.y := 0;
+    if (player^.x > (SCREEN_WIDTH  - player^.w)) then player^.x := (SCREEN_WIDTH  - player^.w);
+    if (player^.y > (SCREEN_HEIGHT - player^.h)) then player^.y := (SCREEN_HEIGHT - player^.h);
+  end;
+end;
+
 procedure spawnEnemies;
 VAR dest : TSDL_FRect;
 begin
@@ -177,7 +209,7 @@ begin
     initEntity(enemy);
     stage.fighterTail^.next := enemy;
     stage.fighterTail := enemy;
-    enemy^.Texture := CacheEnemyTex;
+    enemy^.Texture := enemyTexture;
     SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
     enemy^.w := TRUNC(dest.w);
     enemy^.h := TRUNC(dest.h);
@@ -186,6 +218,7 @@ begin
     enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
     enemy^.side := SIDE_ALIEN;
     enemy^.health := 1;
+    enemy^.reload := FPS * (1 + (RANDOM(RAND_MAX) MOD 3));
     enemyspawnTimer := 30 + (RANDOM(RAND_MAX) MOD FPS);
   end;
 end;
@@ -219,7 +252,8 @@ begin
   begin
     b^.x := b^.x + b^.dx;
     b^.y := b^.y + b^.dy;
-    if ((bulletHitFighter(b) = TRUE) OR (b^.x > SCREEN_WIDTH)) then
+    if ((bulletHitFighter(b) = TRUE) OR (b^.x < -b^.w) OR (b^.y < -b^.h) OR
+        (b^.x > SCREEN_WIDTH) OR (b^.y > SCREEN_HEIGHT)) then
     begin
       if (b = stage.bulletTail) then
         stage.bulletTail := prev;
@@ -241,8 +275,12 @@ begin
   begin
     e^.x := e^.x + e^.dx;
     e^.y := e^.y + e^.dy;
-    if ((e <> player) AND ((e^.x < -e^.w) OR (e^.health = 0))) then
+    if ((e <> player) AND (e^.x < -e^.w)) then
+      e^.health := 0;
+    if (e^.health = 0) then
     begin
+      if (e = player) then
+        player := NIL;
       if (e = stage.fighterTail) then
         stage.fighterTail := prev;
       prev^.next := e^.next;
@@ -250,6 +288,45 @@ begin
       e := prev;
     end;
     prev := e;
+    e := e^.next;
+  end;
+end;
+
+procedure fireAlienbullet(e : PEntity);
+VAR dest : TSDL_FRect;
+begin
+  NEW(bullet);
+  initEntity(bullet);
+  stage.bulletTail^.next := bullet;
+  stage.bulletTail := bullet;
+  bullet^.x := e^.x;
+  bullet^.y := e^.y;
+  bullet^.health := 1;
+  bullet^.Texture := alienbulletTexture;
+  SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
+  bullet^.w := TRUNC(dest.w);
+  bullet^.h := TRUNC(dest.h);
+  bullet^.x := bullet^.x + (e^.w DIV 2) - (bullet^.w DIV 2);
+  bullet^.y := bullet^.y + (e^.h DIV 2) - (bullet^.h DIV 2);
+  calcSlope(TRUNC(player^.x + (player^.w DIV 2)), TRUNC(player^.y + (player^.h DIV 2)), TRUNC(e^.x), TRUNC(e^.y), bullet^.dx, bullet^.dy);
+  bullet^.dx := bullet^.dx * ALIEN_BULLET_SPEED;
+  bullet^.dy := bullet^.dy * ALIEN_BULLET_SPEED;
+  bullet^.side := SIDE_ALIEN;
+  e^.reload := RANDOM(FPS * 2);
+end;
+
+procedure doEnemies;
+VAR e : PEntity;
+begin
+  e := stage.fighterHead^.next;
+  while (e <> NIL) do
+  begin
+    if ((e <> player) AND (player <> NIL)) then
+    begin
+      DEC(e^.reload);
+      if (e^.reload <= 0) then
+        fireAlienbullet(e);
+    end;
     e := e^.next;
   end;
 end;
@@ -265,7 +342,7 @@ begin
   bullet^.y := player^.y;
   bullet^.dx := PLAYER_BULLET_SPEED;
   bullet^.health := 1;
-  bullet^.Texture := CacheBulletTex;
+  bullet^.Texture := bulletTexture;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
   bullet^.w := TRUNC(dest.w);
   bullet^.h := TRUNC(dest.h);
@@ -277,14 +354,17 @@ end;
 
 procedure doPlayer;
 begin
-  player^.dx := 0;
-  player^.dy := 0;
-  if (player^.reload > 0) then DEC(player^.reload);
-  if (app.keyboard[SDL_ScanCode_UP]    OR app.keyboard[SDL_ScanCode_KP_8]) = 1 then player^.dy := (-1 * PLAYER_SPEED);
-  if (app.keyboard[SDL_ScanCode_DOWN]  OR app.keyboard[SDL_ScanCode_KP_2]) = 1 then player^.dy :=       PLAYER_SPEED;
-  if (app.keyboard[SDL_ScanCode_LEFT]  OR app.keyboard[SDL_ScanCode_KP_4]) = 1 then player^.dx := (-1 * PLAYER_SPEED);
-  if (app.keyboard[SDL_ScanCode_RIGHT] OR app.keyboard[SDL_ScanCode_KP_6]) = 1 then player^.dx :=       PLAYER_SPEED;
-  if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload <= 0))        then fireBullet;
+  if (player <> NIL) then
+  begin
+    player^.dx := 0;
+    player^.dy := 0;
+    if (player^.reload > 0) then DEC(player^.reload);
+    if (app.keyboard[SDL_ScanCode_UP]    OR app.keyboard[SDL_ScanCode_KP_8]) = 1 then player^.dy := (-1 * PLAYER_SPEED);
+    if (app.keyboard[SDL_ScanCode_DOWN]  OR app.keyboard[SDL_ScanCode_KP_2]) = 1 then player^.dy :=       PLAYER_SPEED;
+    if (app.keyboard[SDL_ScanCode_LEFT]  OR app.keyboard[SDL_ScanCode_KP_4]) = 1 then player^.dx := (-1 * PLAYER_SPEED);
+    if (app.keyboard[SDL_ScanCode_RIGHT] OR app.keyboard[SDL_ScanCode_KP_6]) = 1 then player^.dx :=       PLAYER_SPEED;
+    if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload <= 0))        then fireBullet;
+  end;
 end;
 
 procedure initPlayer;
@@ -294,21 +374,59 @@ begin
   initEntity(player);
   stage.fighterTail^.next := player;
   stage.fighterTail := player;
+  player^.health := 1;
   player^.x := 100;
   player^.y := 100;
-  player^.Texture := CachePlayerTex;
+  player^.Texture := playerTexture;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
   player^.w := TRUNC(dest.w);
   player^.h := TRUNC(dest.h);
+  player^.reload := 0;
   player^.side := SIDE_PLAYER;
+end;
+
+procedure resetStage;
+VAR e, t : PEntity;
+begin
+  e := stage.fighterHead^.next;
+  while (e <> NIL) do
+  begin
+    t := e^.next;
+    DISPOSE(e);
+    e := t;
+  end;
+
+  e := stage.bulletHead^.next;
+  while (e <> NIL) do
+  begin
+    t := e^.next;
+    DISPOSE(e);
+    e := t;
+  end;
+
+  stage.fighterTail := stage.fighterHead;
+  stage.bulletTail  := stage.bulletHead;
+
+  initPlayer;
+
+  enemyspawnTimer := 0;
+  resetTimer := FPS * 3;
 end;
 
 procedure logic_Game;
 begin
   doPlayer;
+  doEnemies;
   doFighters;
   doBullets;
   spawnEnemies;
+  clipPlayer;
+  if (player = NIL) then
+  begin
+    DEC(resetTimer);
+    if (resetTimer <= 0) then
+      resetStage;
+  end;
 end;
 
 procedure initStage;
@@ -319,13 +437,13 @@ begin
   NEW(stage.bulletHead);
   initEntity(stage.fighterHead);
   initEntity(stage.bulletHead);
-  CacheBulletTex    := loadTexture('gfx/playerBullet.png');
-  CacheEnemyTex     := loadTexture('gfx/enemy.png');
-  CachePlayerTex    := loadTexture('gfx/player.png');
-  stage.fighterTail := stage.fighterHead;
-  stage.bulletTail  := stage.bulletHead;
-  initPlayer;
-  enemyspawnTimer   := 0;
+  stage.fighterTail  := stage.fighterHead;
+  stage.bulletTail := stage.bulletHead;
+  bulletTexture      := loadTexture('gfx/playerBullet.png');
+  enemyTexture       := loadTexture('gfx/enemy.png');
+  alienbulletTexture := loadTexture('gfx/alienBullet.png');
+  playerTexture      := loadTexture('gfx/player.png');
+  resetStage;
 end;
 
 // ***************   INIT SDL   ***************
@@ -338,7 +456,7 @@ begin
   if NOT SDL_Init(SDL_INIT_VIDEO) then
     errorMessage(SDL_GetError());
 
-  app.Window := SDL_CreateWindow('Shooter 07', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
+  app.Window := SDL_CreateWindow('Shooter 08', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
   if app.Window = NIL then
     errorMessage(SDL_GetError());
 
@@ -349,21 +467,9 @@ begin
   SDL_HideCursor;
 end;
 
-procedure Loesch_Liste(a : PEntity);
-VAR t : PEntity;
-begin
-  while (a <> NIL) do
-  begin
-    t := a^.next;
-    DISPOSE(a);
-    a := t;
-  end;
-end;
-
 procedure cleanUp;
 begin
-  Loesch_Liste(stage.fighterHead^.next);
-  Loesch_Liste(stage.bulletHead^.next);
+  DISPOSE(player);
   DISPOSE(stage.fighterHead);
   DISPOSE(stage.bulletHead);
   if ExitCode <> 0 then WriteLn('CleanUp complete!');
@@ -372,8 +478,9 @@ end;
 procedure AtExit;
 begin
   if ExitCode <> 0 then cleanUp;
-  SDL_DestroyTexture (CachePlayerTex);
-  SDL_DestroyTexture (CacheEnemyTex);
+  SDL_DestroyTexture (alienbulletTexture);
+  SDL_DestroyTexture (playerTexture);
+  SDL_DestroyTexture (bulletTexture);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
   SDL_Quit;
@@ -442,6 +549,7 @@ begin
     CapFrameRate(gRemainder, gTicks);
   end;
 
+  resetStage;
   cleanUp;
   AtExit;
 end.

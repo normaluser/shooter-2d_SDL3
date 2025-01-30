@@ -96,8 +96,8 @@ end;
 procedure blit(Texture : PSDL_Texture; x, y : double);
 VAR dest : TSDL_FRect;
 begin
-  dest.x := TRUNC(x);
-  dest.y := TRUNC(y);
+  dest.x := x;
+  dest.y := y;
   SDL_GetTextureSize(Texture, @dest.w, @dest.h);
   SDL_RenderTexture(app.Renderer, Texture, NIL, @dest);
 end;
