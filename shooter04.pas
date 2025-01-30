@@ -21,14 +21,14 @@ The original source and a lot of explanations can be found at:
 https://www.parallelrealities.co.uk/tutorials/#Shooter
 converted from "C" to "Pascal" by Ulrich 2021
 ***************************************************************************
-*** Moving the player with cursorkeys or NUMPAD-Keys
-*** without memory holes; tested with: fpc -Criot -gl -gh shooter03.pas
+*** Firing with the "LEFT Strg / Ctrl" key
+*** without memory holes; tested with: fpc -Criot -gl -gh shooter04.pas
 ***************************************************************************}
 
-PROGRAM Shooter03;
+PROGRAM Shooter04;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
-USES SDL3, SDL3_Image, crt;
+USES SDL3, SDL3_Image;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SCREEN_HEIGHT = 720;             { size of the grafic window }
@@ -36,15 +36,17 @@ CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
 TYPE TApp    = RECORD                       { "T" short for "TYPE" }
                  Window   : PSDL_Window;
                  Renderer : PSDL_Renderer;
-                 up, down, left, right : integer;
+                 up, down, left, right, fire : integer;
                end;
      TEntity = RECORD
-                 x, y : integer;
+                 x, y : double;
+                 dx, dy, health : integer;
                  Texture : PSDL_Texture;
                end;
 
 VAR app      : TApp;
-    player   : TEntity;
+    player,
+    bullet   : TEntity;
     Event    : TSDL_EVENT;
     exitLoop : BOOLEAN;
 
@@ -78,7 +80,7 @@ end;
 
 procedure prepareScene;
 begin
-  SDL_SetRenderDrawColor(app.Renderer, 96, 128, 255, 255);
+  SDL_SetRenderDrawColor(app.Renderer, 32, 32, 32, 255);
   SDL_RenderClear(app.Renderer);
 end;
 
@@ -93,25 +95,19 @@ procedure initSDL;
 VAR windowFlags : integer;
 begin
   windowFlags := 0;
+
   if NOT SDL_Init(SDL_INIT_VIDEO) then
-  begin
-    writeln('Couldn''t initialize SDL');
-    HALT(1);
-  end;
+    errorMessage(SDL_GetError());
 
-  app.Window := SDL_CreateWindow('Shooter 03', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
+  app.Window := SDL_CreateWindow('Shooter 04', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
   if app.Window = NIL then
-  begin
-    writeln('Failed to open ',SCREEN_WIDTH,' x ',SCREEN_HEIGHT,' window');
-    HALT(1);
-  end;
+    errorMessage(SDL_GetError());
 
-  app.Renderer := SDL_CreateRenderer(app.Window, nil);
+  app.Renderer := SDL_CreateRenderer(app.Window, NIL);
   if app.Renderer = NIL then
-  begin
-    writeln('Failed to create renderer');
-    HALT(1);
-  end;
+    errorMessage(SDL_GetError());
+
+  SDL_HideCursor;
 end;
 
 procedure AtExit;
@@ -121,30 +117,33 @@ begin
   SDL_DestroyWindow  (app.Window);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
+  SDL_ShowCursor;
 end;
 
 // *****************   Input  *****************
 
 procedure doKeyDown;
 begin
-  CASE Event.key.key of
-    SDLK_ESCAPE: exitLoop := TRUE;                { close Window with ESC-Key }
+    CASE Event.key.key of
+      SDLK_ESCAPE: exitLoop := TRUE;                { close Window with ESC-Key }
 
-    SDLK_LEFT,  SDLK_KP_4: app.left  := 1;
-    SDLK_RIGHT, SDLK_KP_6: app.right := 1;
-    SDLK_UP,    SDLK_KP_8: app.up    := 1;
-    SDLK_DOWN,  SDLK_KP_2: app.down  := 1;
-  end; { CASE }
+      SDLK_LEFT,  SDLK_KP_4: app.left  := 1;
+      SDLK_RIGHT, SDLK_KP_6: app.right := 1;
+      SDLK_UP,    SDLK_KP_8: app.up    := 1;
+      SDLK_DOWN,  SDLK_KP_2: app.down  := 1;
+      SDLK_LCTRL:            app.fire  := 1;
+    end; { CASE }
 end;
 
 procedure doKeyUp;
 begin
-  CASE Event.key.key of
-    SDLK_LEFT,   SDLK_KP_4: app.left  := 0;
-    SDLK_RIGHT,  SDLK_KP_6: app.right := 0;
-    SDLK_UP,     SDLK_KP_8: app.up    := 0;
-    SDLK_DOWN,   SDLK_KP_2: app.down  := 0;
-  end; { CASE }
+    CASE Event.key.key of
+      SDLK_LEFT,   SDLK_KP_4: app.left  := 0;
+      SDLK_RIGHT,  SDLK_KP_6: app.right := 0;
+      SDLK_UP,     SDLK_KP_8: app.up    := 0;
+      SDLK_DOWN,   SDLK_KP_2: app.down  := 0;
+      SDLK_LCTRL:             app.fire  := 0;
+    end; { CASE }
 end;
 
 procedure doInput;
@@ -154,7 +153,7 @@ begin
     CASE Event._Type of
 
       SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
-      SDL_EVENT_MOUSE_BUTTON_DOWN: exitloop := TRUE;
+      SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
 
       SDL_EVENT_KEY_DOWN:          doKeyDown;
       SDL_EVENT_KEY_UP:            doKeyUp;
@@ -166,11 +165,11 @@ end;
 // *****************   MAIN   *****************
 
 begin
-  clrscr;
   InitSDL;
   AddExitProc(@AtExit);
   exitLoop := FALSE;
   player.Texture := loadTexture('gfx/player.png');
+  bullet.Texture := loadTexture('gfx/playerBullet.png');
   player.x := 100;
   player.y := 100;
 
@@ -182,7 +181,19 @@ begin
     if app.down = 1  then player.y := player.y + 4;
     if app.left = 1  then player.x := player.x - 4;
     if app.right = 1 then player.x := player.x + 4;
-    blit(player.Texture, player.x, player.y);
+    if ((app.fire = 1) AND (bullet.health = 0)) then
+    begin
+      bullet.x := player.x;
+      bullet.y := player.y;
+      bullet.dx := 16;
+      bullet.dy := 0;
+      bullet.health := 1;
+    end;
+    bullet.x := bullet.x + bullet.dx;
+    bullet.y := bullet.y + bullet.dy;
+    if (bullet.x > SCREEN_WIDTH) then bullet.health := 0;
+    blit(player.Texture, TRUNC(player.x), TRUNC(player.y));
+    if (bullet.health > 0) then blit(bullet.Texture, TRUNC(bullet.x), TRUNC(bullet.y));
     presentScene;
     SDL_Delay(16);
   end;

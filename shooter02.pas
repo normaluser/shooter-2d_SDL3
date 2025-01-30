@@ -63,11 +63,7 @@ VAR dest : TSDL_FRect;
 begin
   dest.x := x;
   dest.y := y;
-  //dest.w := 60;
-  //dest.h := 60;
-
   SDL_GetTextureSize(Texture, @dest.w, @dest.h);
-
   SDL_RenderTexture(app.Renderer, Texture, NIL, @dest);
 end;
 
@@ -145,8 +141,8 @@ begin
   AddExitProc(@AtExit);
   exitLoop := FALSE;
   player.Texture := loadTexture('gfx/player.png');
-  player.x := 300;
-  player.y := 300;
+  player.x := 100;
+  player.y := 100;
 
   while exitLoop = FALSE do
   begin
