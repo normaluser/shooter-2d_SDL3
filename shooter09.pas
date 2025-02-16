@@ -68,7 +68,7 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
      PDebris     = ^TDebris;
      TDebris     = RECORD
                      x, y, dx, dy : double;
-                     rect : TSDL_Rect;
+                     rect : TSDL_FRect;
                      Texture : PSDL_Texture;
                      life : integer;
                      next : PDebris;
