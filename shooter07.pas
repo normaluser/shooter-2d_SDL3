@@ -28,7 +28,7 @@ converted from "C" to "Pascal" by Ulrich 2021
 PROGRAM Shooter07;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
-USES SDL3, SDL3_Image, math;
+USES SDL3, SDL3_Image, Math;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SCREEN_HEIGHT = 720;             { size of the grafic window }
@@ -52,8 +52,8 @@ TYPE TDelegating    = Procedure;            { "T" short for "TYPE" }
                       end;
      PEntity        = ^TEntity;
      TEntity        = RECORD
-                        x, y, dx, dy : double;
-                        w, h, health, reload, side : integer;
+                        x, y, w, h, dx, dy : double;
+                        health, reload, side : integer;
                         Texture : PSDL_Texture;
                         next : PEntity;
                       end;
@@ -81,19 +81,10 @@ VAR app             : TApp;
 procedure initEntity(e : PEntity);
 begin
   e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL; e^.side := 0;
-  e^.w := 0;   e^.h := 0;   e^.health := 0; e^.reload := 0; e^.next := NIL;
+  e^.w := 0.0; e^.h := 0.0; e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
 // *****************   UTIL   *****************
-
-{function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : BOOLEAN;
-VAR a_Rect, b_Rect : TSDL_Rect;
-begin
-  collision := FALSE;
-  a_Rect.x := ROUND(x1); a_Rect.y := ROUND(y1); a_Rect.w := ROUND(w1); a_Rect.h := ROUND(h1);
-  b_Rect.x := ROUND(x2); b_Rect.y := ROUND(y2); b_Rect.w := ROUND(w2); b_Rect.h := ROUND(h2);
-  if (SDL_HasIntersection(@a_Rect, @b_Rect) = SDL_TRUE) then collision := TRUE;
-end;  }
 
 function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : Boolean;
 begin
@@ -179,10 +170,10 @@ begin
     stage.fighterTail := enemy;
     enemy^.Texture := CacheEnemyTex;
     SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
-    enemy^.w := TRUNC(dest.w);
-    enemy^.h := TRUNC(dest.h);
+    enemy^.w := dest.w;
+    enemy^.h := dest.h;
     enemy^.x := SCREEN_WIDTH;
-    enemy^.y := RANDOM(SCREEN_HEIGHT - enemy^.h);
+    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
     enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
     enemy^.side := SIDE_ALIEN;
     enemy^.health := 1;
@@ -267,10 +258,10 @@ begin
   bullet^.health := 1;
   bullet^.Texture := CacheBulletTex;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (player^.w DIV 2);
-  bullet^.y := bullet^.y + (player^.h DIV 2) - (bullet^.h DIV 2);
+  bullet^.w := dest.w;
+  bullet^.h := dest.h;
+  bullet^.x := bullet^.x + (player^.w / 2);
+  bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
   bullet^.side := SIDE_PLAYER;
   player^.reload := 8;
 end;
@@ -298,8 +289,8 @@ begin
   player^.y := 100;
   player^.Texture := CachePlayerTex;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := TRUNC(dest.w);
-  player^.h := TRUNC(dest.h);
+  player^.w := dest.w;
+  player^.h := dest.h;
   player^.side := SIDE_PLAYER;
 end;
 
@@ -376,6 +367,7 @@ begin
   SDL_DestroyTexture (CacheEnemyTex);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;

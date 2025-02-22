@@ -51,8 +51,8 @@ TYPE TDelegating    = Procedure;            { "T" short for "TYPE" }
                       end;
      PEntity        = ^TEntity;           { "P" short for "Pointer" }
      TEntity        = RECORD
-                        x, y, dx, dy : double;
-                        w, h, health, reload : integer;
+                        x, y, w, h, dx, dy : double;
+                        health, reload : integer;
                         Texture : PSDL_Texture;
                         next : PEntity;
                       end;
@@ -80,7 +80,7 @@ VAR app             : TApp;
 procedure initEntity(e : PEntity);
 begin
   e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL;
-  e^.w := 0;   e^.h := 0;   e^.health := 0; e^.reload := 0; e^.next := NIL;
+  e^.w := 0.0; e^.h := 0.0; e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
 // *****************   UTIL   *****************
@@ -164,10 +164,10 @@ begin
     stage.fighterTail := enemy;
     enemy^.Texture := CacheEnemyTex;
     SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
-    enemy^.w := TRUNC(dest.w);
-    enemy^.h := TRUNC(dest.h);
+    enemy^.w := dest.w;
+    enemy^.h := dest.h;
     enemy^.x := SCREEN_WIDTH;
-    enemy^.y := RANDOM(SCREEN_HEIGHT - enemy^.h);
+    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
     enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
     enemyspawnTimer := 30 + (RANDOM(RAND_MAX) MOD FPS);
   end;
@@ -230,10 +230,10 @@ begin
   bullet^.health := 1;
   bullet^.Texture := CacheBulletTex;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (player^.w DIV 2);
-  bullet^.y := bullet^.y + (player^.h DIV 2) - (bullet^.h DIV 2);
+  bullet^.w := dest.w;
+  bullet^.h := dest.h;
+  bullet^.x := bullet^.x + (player^.w / 2);
+  bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
   player^.reload := 8;
 end;
 
@@ -261,8 +261,8 @@ begin
   player^.reload := 8;
   player^.Texture := CachePlayerTex;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := TRUNC(dest.w);
-  player^.h := TRUNC(dest.h);
+  player^.w := dest.w;
+  player^.h := dest.h;
 end;
 
 procedure logic_Game;
@@ -339,6 +339,7 @@ begin
   SDL_DestroyTexture (CacheBulletTex);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;

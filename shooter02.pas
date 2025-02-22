@@ -28,7 +28,7 @@ converted from "C" to "Pascal" by Ulrich 2021
 PROGRAM Shooter02;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
-USES SDL3, SDL3_Image, sysutils;
+USES SDL3, SDL3_Image;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SCREEN_HEIGHT = 720;             { size of the grafic window }
@@ -39,7 +39,7 @@ TYPE TApp    = RECORD                       { "T" short for "TYPE" }
                  Renderer : PSDL_Renderer;
                end;
      TEntity = RECORD
-                 x, y : integer;
+                 x, y : double;
                  Texture : PSDL_Texture;
                end;
 
@@ -58,7 +58,7 @@ end;
 
 // *****************   DRAW   *****************
 
-procedure blit(Texture : PSDL_Texture; x, y : integer);
+procedure blit(Texture : PSDL_Texture; x, y : double);
 VAR dest : TSDL_FRect;
 begin
   dest.x := x;
@@ -104,7 +104,7 @@ begin
     HALT(1);
   end;
 
-  app.Renderer := SDL_CreateRenderer(app.Window, nil);
+  app.Renderer := SDL_CreateRenderer(app.Window, NIL);
   if app.Renderer = NIL then
   begin
     writeln('Failed to create renderer');
@@ -114,9 +114,10 @@ end;
 
 procedure AtExit;
 begin
-  //SDL_DestroyTexture (player.Texture);
+  SDL_DestroyTexture (player.Texture);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
 end;
@@ -129,7 +130,7 @@ begin
   begin
     CASE Event._Type of
       SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
-      SDL_EVENT_MOUSE_BUTTON_DOWN: exitloop := TRUE;
+      SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;

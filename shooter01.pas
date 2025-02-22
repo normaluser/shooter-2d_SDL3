@@ -73,7 +73,7 @@ begin
     HALT(1);
   end;
 
-  app.Renderer := SDL_CreateRenderer(app.Window, nil);
+  app.Renderer := SDL_CreateRenderer(app.Window, NIL);
   if app.Renderer = NIL then
   begin
     writeln('Failed to create renderer');
@@ -85,6 +85,7 @@ procedure AtExit;
 begin
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
 end;
@@ -97,7 +98,7 @@ begin
   begin
     CASE Event._Type of
       SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
-      SDL_EVENT_MOUSE_BUTTON_DOWN: exitloop := TRUE;        { if Mousebutton pressed }
+      SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;

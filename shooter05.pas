@@ -48,8 +48,8 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
                    end;
      PEntity     = ^TEntity;             { "P" short for "Pointer" }
      TEntity     = RECORD
-                     x, y, dx, dy : double;
-                     w, h, health, reload : integer;
+                     x, y, w, h, dx, dy : double;
+                     health, reload : integer;
                      Texture : PSDL_Texture;
                      next : PEntity;
                    end;
@@ -64,7 +64,7 @@ VAR app              : TApp;
     bullet           : PEntity;
     CachePlayerTex,
     CacheBulletTex   : PSDL_Texture;
-    Event            : PSDL_EVENT;
+    Event            : TSDL_EVENT;
     exitLoop         : BOOLEAN;
     gTicks           : UInt32;
     gRemainder       : double;
@@ -75,8 +75,8 @@ procedure initEntity(e : PEntity);
 begin
   with e^ do
   begin
-    x := 0.0; dx := 0.0; w := 0; health := 0; Texture := NIL;
-    y := 0.0; dy := 0.0; h := 0; reload := 0; next := NIL;
+    x := 0.0; dx := 0.0; w := 0.0; health := 0; Texture := NIL;
+    y := 0.0; dy := 0.0; h := 0.0; reload := 0; next := NIL;
   end;
 end;
 
@@ -178,10 +178,10 @@ begin
   bullet^.health := 1;
   bullet^.Texture := CacheBulletTex;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (player^.w DIV 2);
-  bullet^.y := bullet^.y + (player^.h DIV 2) - (bullet^.h DIV 2);
+  bullet^.w := dest.w;
+  bullet^.h := dest.h;
+  bullet^.x := bullet^.x + (player^.w / 2);
+  bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
   player^.reload := 8;
 end;
 
@@ -211,8 +211,8 @@ begin
   player^.reload := 8;
   player^.Texture := CachePlayerTex;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := TRUNC(dest.w);
-  player^.h := TRUNC(dest.h);
+  player^.w := dest.w;
+  player^.h := dest.h;
 end;
 
 procedure logic_Game;
@@ -223,7 +223,6 @@ end;
 
 procedure initStage;
 begin
-  NEW(event);
   app.delegate.logic := @logic_Game;
   app.delegate.draw  := @draw_Game;
   NEW(stage.fighterHead);
@@ -275,7 +274,6 @@ begin
   Loesch_Liste(stage.bulletHead^.next);
   DISPOSE(stage.fighterHead);
   DISPOSE(stage.bulletHead);
-  DISPOSE(event);
   if ExitCode <> 0 then WriteLn('CleanUp complete!');
 end;
 
@@ -286,6 +284,7 @@ begin
   SDL_DestroyTexture (CachePlayerTex);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;
@@ -295,22 +294,22 @@ end;
 
 procedure doInput;
 begin
-  while SDL_PollEvent(Event) do
+  while SDL_PollEvent(@Event) do
   begin
-    CASE Event^._Type of
+    CASE Event._Type of
 
       SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
       SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
 
       SDL_EVENT_KEY_DOWN: begin
-                            if (Event^.key.scancode < MAX_KEYBOARD_KEYS) then
-                              app.keyboard[Event^.key.scancode] := 1;
+                            if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                              app.keyboard[Event.key.scancode] := 1;
                             if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
                           end;   { SDL_Keydown }
 
       SDL_EVENT_KEY_UP:   begin
-                            if ((Event^.key.scancode < MAX_KEYBOARD_KEYS)) then
-                              app.keyboard[Event^.key.scancode] := 0;
+                            if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                              app.keyboard[Event.key.scancode] := 0;
                           end;   { SDL_Keyup }
     end;  { CASE Event }
   end;    { SDL_PollEvent }

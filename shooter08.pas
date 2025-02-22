@@ -53,8 +53,8 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
                    end;
      PEntity     = ^TEntity;
      TEntity     = RECORD
-                     x, y, dx, dy : double;
-                     w, h, health, reload, side : integer;
+                     x, y, w, h, dx, dy : double;
+                     health, reload, side : integer;
                      Texture : PSDL_Texture;
                      next : PEntity;
                    end;
@@ -84,40 +84,29 @@ VAR app                  : TApp;
 procedure initEntity(e : PEntity);
 begin
   e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL; e^.side := 0;
-  e^.w := 0;   e^.h := 0;   e^.health := 0; e^.reload := 0; e^.next := NIL;
+  e^.w := 0.0; e^.h := 0.0; e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
 // *****************   UTIL   *****************
-
-{function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : BOOLEAN;
-VAR a_Rect, b_Rect : TSDL_Rect;
-begin
-  collision := FALSE;
-  a_Rect.x := ROUND(x1); a_Rect.y := ROUND(y1); a_Rect.w := ROUND(w1); a_Rect.h := ROUND(h1);
-  b_Rect.x := ROUND(x2); b_Rect.y := ROUND(y2); b_Rect.w := ROUND(w2); b_Rect.h := ROUND(h2);
-  if (SDL_HasIntersection(@a_Rect, @b_Rect) = SDL_TRUE) then collision := TRUE;
-end;  }
 
 function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : Boolean;
 begin
   collision := (MAX(x1, x2) < MIN(x1 + w1, x2 + w2)) AND (MAX(y1, y2) < MIN(y1 + h1, y2 + h2));
 end;
 
-procedure calcSlope(x1, y1, x2, y2 : integer; VAR dx, dy : double);
-VAR steps : integer;
+procedure calcSlope(x1, y1, x2, y2 : double; VAR dx, dy : double);
+VAR steps : double;
 begin
   steps := MAX(ABS(x1-x2), ABS(y1-y2));
-  if steps = 0 then
+  if steps <> 0.0 then
   begin
-    dx := 0;
-    dy := 0;
+    dx := (x1 - x2) / steps;
+    dy := (y1 - y2) / steps;
   end
   else
   begin
-    dx := x1 - x2;
-    dx := dx / steps;
-    dy := y1 - y2;
-    dy := dy / steps;
+    dx := 0.0;
+    dy := 0.0;
   end;
 end;
 
@@ -211,10 +200,10 @@ begin
     stage.fighterTail := enemy;
     enemy^.Texture := enemyTexture;
     SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
-    enemy^.w := TRUNC(dest.w);
-    enemy^.h := TRUNC(dest.h);
+    enemy^.w := dest.w;
+    enemy^.h := dest.h;
     enemy^.x := SCREEN_WIDTH;
-    enemy^.y := RANDOM(SCREEN_HEIGHT - enemy^.h);
+    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
     enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
     enemy^.side := SIDE_ALIEN;
     enemy^.health := 1;
@@ -304,11 +293,11 @@ begin
   bullet^.health := 1;
   bullet^.Texture := alienbulletTexture;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (e^.w DIV 2) - (bullet^.w DIV 2);
-  bullet^.y := bullet^.y + (e^.h DIV 2) - (bullet^.h DIV 2);
-  calcSlope(TRUNC(player^.x + (player^.w DIV 2)), TRUNC(player^.y + (player^.h DIV 2)), TRUNC(e^.x), TRUNC(e^.y), bullet^.dx, bullet^.dy);
+  bullet^.w := dest.w;
+  bullet^.h := dest.h;
+  bullet^.x := bullet^.x + (e^.w / 2) - (bullet^.w / 2);
+  bullet^.y := bullet^.y + (e^.h / 2) - (bullet^.h / 2);
+  calcSlope((player^.x + (player^.w / 2)), (player^.y + (player^.h / 2)), (e^.x), (e^.y), bullet^.dx, bullet^.dy);
   bullet^.dx := bullet^.dx * ALIEN_BULLET_SPEED;
   bullet^.dy := bullet^.dy * ALIEN_BULLET_SPEED;
   bullet^.side := SIDE_ALIEN;
@@ -344,10 +333,10 @@ begin
   bullet^.health := 1;
   bullet^.Texture := bulletTexture;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (player^.w DIV 2);
-  bullet^.y := bullet^.y + (player^.h DIV 2) - (bullet^.h DIV 2);
+  bullet^.w := dest.w;
+  bullet^.h := dest.h;
+  bullet^.x := bullet^.x + (player^.w / 2);
+  bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
   bullet^.side := SIDE_PLAYER;
   player^.reload := 8;
 end;
@@ -379,8 +368,8 @@ begin
   player^.y := 100;
   player^.Texture := playerTexture;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := TRUNC(dest.w);
-  player^.h := TRUNC(dest.h);
+  player^.w := dest.w;
+  player^.h := dest.h;
   player^.reload := 0;
   player^.side := SIDE_PLAYER;
 end;
@@ -437,8 +426,8 @@ begin
   NEW(stage.bulletHead);
   initEntity(stage.fighterHead);
   initEntity(stage.bulletHead);
-  stage.fighterTail  := stage.fighterHead;
-  stage.bulletTail := stage.bulletHead;
+  stage.fighterTail := stage.fighterHead;
+  stage.bulletTail  := stage.bulletHead;
   bulletTexture      := loadTexture('gfx/playerBullet.png');
   enemyTexture       := loadTexture('gfx/enemy.png');
   alienbulletTexture := loadTexture('gfx/alienBullet.png');
@@ -483,6 +472,7 @@ begin
   SDL_DestroyTexture (bulletTexture);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;

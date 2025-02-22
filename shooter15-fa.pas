@@ -1,4 +1,4 @@
-{**************************************************************************
+{*****************************************************************************
 Copyright (C) 2015-2018 Parallel Realities
 
 This program is free software; you can redistribute it and/or
@@ -16,35 +16,38 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
-***************************************************************************
+******************************************************************************
 The original source and a lot of explanations can be found at:
 https://www.parallelrealities.co.uk/tutorials/#Shooter
 converted from "C" to "Pascal" by Ulrich 2021
-***************************************************************************
-*** Highscore table part 1
-*** without memory holes; tested with: fpc -Criot -gl -gh shooter13.pas
-***************************************************************************}
+******************************************************************************
+*** Title screen and finishing touches
+*** without memory holes; tested with: fpc -Criot -gl -gh shooter15-fa.pas
+*** shooter15-fa should run in it's own directory,
+*** or rename "Higscore.json" to "Highscore1.json" in line 71 for to have less problems... :)
+******************************************************************************}
 
-PROGRAM Shooter13;
+PROGRAM Shooter15_fps_atlas;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
-USES SDL3, SDL3_Image, SDL3_Mixer, Math, sysutils;
+USES SDL3, SDL3_Image, SDL3_Mixer, Math, JsonTools, sysutils;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SCREEN_HEIGHT = 720;             { size of the grafic window }
       PLAYER_SPEED  = 4.0;
       PLAYER_BULLET_SPEED = 20.0;
       ALIEN_BULLET_SPEED = 8.0;
-      POINTSPOD_TIME = 10;
+      POINTSPOD_TIME = 10.0;
       RAND_MAX = 3276;
       NUM_HighScores = 8;
       MAX_KEYBOARD_KEYS = 350;
+      MAX_SCORE_NAME_LENGTH = 16;
       MAX_STRING_LENGTH = 50;
       SIDE_PLAYER = 0;
       SIDE_ALIEN = 1;
-      FPS = 60;
+      cFPS = 60;                       { Ganzzahlig }
+      LOGIC_RATE = (cFPS / 1000);      { Logic_Rate => real number }
       MAX_STARS = 500;
-      MIX_MAX_Volume = 128;
 
       MAX_SND_CHANNELS = 8;
       SND_PLAYER_FIRE  = 1;
@@ -57,33 +60,50 @@ CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       CH_PLAYER        = 0;
       CH_ALIEN_FIRE    = 1;
       CH_POINTS        = 2;
+      MIX_MAX_Volume   = 128;
 
       GLYPH_HEIGHT     = 28;
       GLYPH_WIDTH      = 18;
 
+      NUMATLASBUCKETS  = 11;
+      Json_Path        = 'data/atlas.json';
+      Tex_Path         = 'gfx/atlas.png';
+      Font_Path        = 'gfx/font.png';
+      ScorePath        = 'Highscore.json';
+
 TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
+     TString16   = String[MAX_SCORE_NAME_LENGTH];
      TString50   = String[MAX_STRING_LENGTH];
+     String255   = String[255];
+     TDev        = RECORD
+                     TFPS : integer;
+                   end;
+     PAtlasImage = ^TAtlasImage;
+     TAtlasImage = RECORD
+                      FNam : String255;
+                      Rec  : TSDL_FRect;
+                      Rot  : integer;
+                      Tex  : PSDL_Texture;
+                      next : PAtlasImage;
+                    end;
+     AtlasArr    = ARRAY[0..NUMATLASBUCKETS] of PAtlasImage;
      TDelegate   = RECORD
                      logic, draw : TDelegating;
-                   end;
-     PTextur     = ^TTexture;
-     TTexture    = RECORD
-                     name : String;
-                     Texture : PSDL_Texture;
-                     next : PTextur;
                    end;
      TApp        = RECORD
                      Window   : PSDL_Window;
                      Renderer : PSDL_Renderer;
                      keyboard : ARRAY[0..MAX_KEYBOARD_KEYS] OF integer;
-                     textureHead, textureTail : PTextur;
+                     inputText : String;
+                     deltaTime : double;
+                     dev : TDev;
                      delegate : TDelegate;
                    end;
      PEntity     = ^TEntity;
      TEntity     = RECORD
-                     x, y, w, h, dx, dy : double;
-                     health, reload, side : integer;
-                     Texture : PSDL_Texture;
+                     x, y, w, h, dx, dy, reload, health : double;
+                     side : integer;
+                     Texture : PAtlasImage;
                      next : PEntity;
                    end;
      PExplosion  = ^TExplosion;
@@ -96,8 +116,8 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
      TDebris     = RECORD
                      x, y, dx, dy : double;
                      rect : TSDL_FRect;
-                     Texture : PSDL_Texture;
-                     life : integer;
+                     Texture : PAtlasImage;
+                     life : double;
                      next : PDebris;
                    end;
      TStage      = RECORD
@@ -109,45 +129,57 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
                      score : integer;
                    end;
      TStar       = RECORD
-                     x, y, speed : integer;
+                     x, y : double;
+                     speed : integer;
                    end;
      THighScoreDef = RECORD
+                       name : TString16;
                        recent, score : integer;
                      end;
      THighScoreARRAY =     ARRAY[0..PRED(NUM_HighScores)] OF THighScoreDef;
      TnewHighScoresARRAY = ARRAY[0..NUM_HighScores] OF THighScoreDef;
 
+     TAlignment = (TEXT_LEFT, TEXT_CENTER, TEXT_RIGHT);
 
-VAR app                  : TApp;
-    stage                : TStage;
+VAR app              : TApp;
+    stage            : TStage;
     player,
     enemy,
-    bullet               : PEntity;
+    bullet           : PEntity;
+    explode,
     fontTexture,
-    pointsTexture,
-    enemyTexture,
-    bulletTexture,
-    alienbulletTexture,
-    playerTexture,
-    background,
-    explosionTexture     : PSDL_Texture;
-    Event                : TSDL_EVENT;
-    exitLoop             : BOOLEAN;
-    gTicks               : UInt32;
-    gRemainder           : double;
-    backgroundX,
+    atlasTex         : PSDL_Texture;
+    atlases          : AtlasArr;
+    SDL2Texture,
+    ShooterTexture,
+    backgroundAtlas,
+    explosionAtlas   : PAtlasImage;
+    Event            : TSDL_EVENT;
+    newHighScoreFlag,
+    exitLoop         : BOOLEAN;
+    FPS              : integer;
+    thentime,
+    nextFPS          : LongInt;
+    resetTimer,
     enemyspawnTimer,
-    resetTimer           : integer;
-    stars                : ARRAY[0..MAX_STARS] OF TStar;
-    sounds               : ARRAY[1..SND_MAX] OF PMix_Chunk;
-    music                : PMix_Music;
-    HighScores           : THighScoreARRAY;
+    reveal,
+    reveal_max,
+    timeout,
+    cursorBlink,
+    backgroundX      : double;
+    stars            : ARRAY[0..MAX_STARS] OF TStar;
+    sounds           : ARRAY[1..SND_MAX] OF PMix_Chunk;
+    music            : PMix_Music;
+    SoundVol         : integer;
+    MusicVol         : integer;
+    HighScores       : THighScoreARRAY;
+    newHighScore     : THighScoreDef;
 
 // *****************   INIT   *****************
 
 procedure initEntity(e : PEntity);
 begin
-  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL; e^.side := 0;
+  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL;  e^.side := 0;
   e^.w := 0.0; e^.h := 0.0; e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
@@ -163,30 +195,25 @@ begin
   e^.r := 0;   e^.g := 0;   e^.b  := 0;   e^.a  := 0;   e^.next := NIL;
 end;
 
-procedure initTex(te : PTextur);
+procedure initAtlasImage(e : PAtlasImage);
 begin
-  te^.name := '';
-  te^.Texture := NIL;
-  te^.next := NIL;
+  e^.FNam := ''; e^.Rot := 0; e^.Tex := NIL; e^.next := NIL;
 end;
 
 procedure initStageListenPointer;
 begin
-  NEW(app.textureHead);
   NEW(stage.fighterHead);
   NEW(stage.bulletHead);
   NEW(stage.explosionHead);
   NEW(stage.debrisHead);
   NEW(stage.pointsHead);
 
-  initTex(app.textureHead);
   initEntity(stage.fighterHead);
   initEntity(stage.bulletHead);
   initExplosion(stage.explosionHead);
   initDebris(stage.debrisHead);
   initEntity(stage.pointsHead);
 
-  app.textureTail     := app.textureHead;
   stage.fighterTail := stage.fighterHead;
   stage.bulletTail  := stage.bulletHead;
   stage.explosionTail := stage.explosionHead;
@@ -204,7 +231,7 @@ end;
 procedure calcSlope(x1, y1, x2, y2 : double; VAR dx, dy : double);
 VAR steps : double;
 begin
-  steps := MAX(ABS(x1-x2), ABS(y1-y2));
+  steps := MAX(ABS((x1-x2)), ABS((y1-y2)));
   if steps <> 0.0 then
   begin
     dx := (x1 - x2) / steps;
@@ -215,6 +242,21 @@ begin
     dx := 0.0;
     dy := 0.0;
   end;
+end;
+
+function HashCode(Value : String255) : UInt32;     // DJB hash function
+VAR i, x, Result : UInt32;
+begin
+  Result := 0;
+  for i := 1 to Length(Value) do
+  begin
+    Result := (Result shl 4) + Ord(Value[i]);
+    x := Result and $F0000000;
+    if (x <> 0) then
+      Result := Result xor (x shr 24);
+    Result := Result and (not x);
+  end;
+  HashCode := Result;
 end;
 
 procedure errorMessage(Message1 : String);
@@ -228,6 +270,13 @@ VAR Fmt : PChar;
 begin
   Fmt := 'File not found: %s'#13;    // Formatstring und "ARRAY of const" als Parameteruebergabe in [ ]
   SDL_Log(Fmt, PChar(Message1));
+end;
+
+procedure pathTest;
+begin
+  if NOT FileExists(Json_Path) then errorMessage(Json_Path + ' not found!');
+  if NOT FileExists(Tex_Path)  then errorMessage(Tex_Path  + ' not found!');
+  if NOT FileExists(Font_Path) then errorMessage(Font_Path + ' not found!');
 end;
 
 // *****************   SOUND  *****************
@@ -292,7 +341,61 @@ begin
   SDL_RenderTexture(app.Renderer, Texture, NIL, @dest);
 end;
 
-procedure blitRect(Texture : PSDL_Texture; src : PSDL_FRect; x, y : double);
+procedure blitAtlasImage(atlas : PAtlasImage; x, y : double; center : integer);
+VAR dest : TSDL_FRect;
+    p : TSDL_Point;
+begin
+  dest.x := x;
+  dest.y := y;
+  dest.w := atlas^.Rec.w;
+  dest.h := atlas^.Rec.h;
+
+  if atlas^.Rot = 0 then
+  begin
+    if center <> 0 then
+    begin
+      dest.x := dest.x - (dest.w / 2);
+      dest.y := dest.y - (dest.h / 2);
+    end;
+    SDL_RenderTexture(app.Renderer, atlas^.Tex, @atlas^.Rec, @dest);
+  end
+  else
+  begin
+    if center <> 0 then
+    begin
+      dest.x := dest.x - (dest.h / 2);
+      dest.y := dest.y - (dest.w / 2);
+    end;
+    p.x := 0;
+    p.y := 0;
+    dest.y := dest.y + atlas^.Rec.w;
+    SDL_RenderTextureRotated(app.Renderer, atlas^.Tex, @atlas^.Rec, @dest, -90, @p, SDL_FLIP_NONE);
+  end;
+end;
+
+procedure blitAtlasImageScaled(atlas : PAtlasImage; x, y, w, h : double);
+VAR dest : TSDL_FRect;
+    p    : TSDL_Point;
+begin
+  dest.x := x;
+  dest.y := y;
+  dest.w := w;
+  dest.h := h;
+
+  if (atlas^.rot = 0) then
+  begin
+    p.x := 0;
+    p.y := 0;
+    dest.y := dest.y + atlas^.Rec.w;
+    SDL_RenderTextureRotated(app.Renderer, atlas^.tex, @atlas^.Rec, @dest, -90, @p, SDL_FLIP_NONE);
+  end
+  else
+  begin
+    SDL_RenderTexture(app.Renderer, atlas^.tex, @atlas^.Rec, @dest);
+  end;
+end;
+
+procedure blitRectText(Texture : PSDL_Texture; src : PSDL_FRect; x, y : double);
 VAR dest : TSDL_FRect;
 begin
   dest.x := x;
@@ -302,45 +405,14 @@ begin
   SDL_RenderTexture(app.Renderer, Texture, src, @dest);
 end;
 
-procedure addTextureToCache(Lname : String; LTexture : PSDL_Texture);
-VAR cache : PTextur;
+procedure blitRect(Texture : PAtlasImage; src : PSDL_FRect; x, y : double);
+VAR dest : TSDL_FRect;
 begin
-  NEW(cache);
-  initTex(cache);
-  app.textureTail^.next := cache;
-  app.textureTail := cache;
-  cache^.name := Lname;
-  cache^.Texture := LTexture;
-end;
-
-function getTexture(name : String) : PSDL_Texture;
-VAR tg : PTextur;
-begin
-  getTexture := NIL;
-  tg := app.textureHead^.next;
-  while (tg <> NIL) do
-  begin
-    if (tg^.name = name)
-    //if compareText(tg^.name, name) = 0
-      then getTexture := tg^.Texture;
-    tg := tg^.next;
-  end;
-end;
-
-function loadTexture(Pfad : String) : PSDL_Texture;
-VAR tl : PSDL_Texture;
-    Fmt : PChar;
-begin
-  tl := getTexture(Pfad);
-  if tl = NIL then
-  begin
-    tl := IMG_LoadTexture(app.Renderer, PChar(Pfad));
-    if tl = NIL then errorMessage(SDL_GetError());
-    addTextureToCache(Pfad, tl);
-  end;
-  Fmt := 'Loading %s'#13;
-  SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO,  Fmt, PChar(Pfad));
-  loadTexture := tl;
+  dest.x := x;
+  dest.y := y;
+  dest.w := src^.w;
+  dest.h := src^.h;
+  SDL_RenderTexture(app.Renderer, Texture^.Tex, src , @dest);
 end;
 
 procedure prepareScene;
@@ -354,13 +426,104 @@ begin
   SDL_RenderPresent(app.Renderer);
 end;
 
+// ****************   TEXTURE   ***************
+
+function getAtlasImage(filename : String255) : PAtlasImage;
+VAR a : PAtlasImage;
+    i : UInt32;
+begin
+  i := HashCode(filename) MOD NUMATLASBUCKETS;
+  a := atlases[i]^.next;
+  getAtlasImage := NIL;
+  while (a <> NIL) do
+  begin
+    if a^.fnam = filename then
+      getAtlasImage := a;
+    a := a^.next;
+  end;
+  if getAtlasImage = NIL then
+    logMessage(filename);
+end;
+
+procedure loadAtlasTexture;
+begin
+  atlasTex := IMG_LoadTexture(app.Renderer, Tex_Path);
+  if atlasTex = NIL then
+    errorMessage(SDL_GetError());
+end;
+
+procedure loadAtlasData;
+VAR i, x, y, w, h, r : integer;
+    a, AtlasNew : PAtlasImage;
+    N, C : TJsonNode;
+    filename : String255;
+begin
+  if FileExists(Json_Path) then
+  begin
+    //Get the JSON data
+    N := TJsonNode.Create;
+    N.LoadFromFile(Json_Path);
+
+    for c in n do
+    begin
+      filename  := c.Find('filename').AsString;
+      x := c.Find('x').AsInteger;
+      y := c.Find('y').AsInteger;
+      w := c.Find('w').AsInteger;
+      h := c.Find('h').AsInteger;
+      r := c.Find('rotated').AsInteger;
+
+      i := HashCode(filename) MOD NUMATLASBUCKETS;
+
+      a := atlases[i];            // must be created and initialized before!
+
+      while (a^.next <> NIL) do
+        begin a := a^.next; end;
+
+      NEW(AtlasNEW);
+      initAtlasImage(AtlasNEW);
+
+      AtlasNEW^.Fnam := filename;
+      AtlasNEW^.Rec.x := x;
+      AtlasNEW^.Rec.y := y;
+      AtlasNEW^.Rec.w := w;
+      AtlasNEW^.Rec.h := h;
+      AtlasNEW^.Rot   := r;
+      AtlasNEW^.Tex   := atlasTex;
+      AtlasNEW^.next  := NIL;
+
+      a^.next := atlasNEW;
+    end;
+    N.free;
+  end
+  else
+  errorMessage('Atlas-Json not found!');
+end;
+
+procedure initAtlas;
+VAR i : integer;
+begin
+  for i := 0 to NUMATLASBUCKETS do
+  begin
+    NEW(atlases[i]);
+    initAtlasImage(atlases[i]);                // create and initialize PAtlasImage
+  end;
+
+  loadAtlasTexture;
+  loadAtlasData;
+end;
+
 // *****************   TEXT   *****************
 
-procedure drawText(x, y, r, g, b : integer; outText : TString50);
+procedure drawText(x, y, r, g, b : integer; align : TAlignment; outText : TString50);
 VAR i, len : integer;
     rect : TSDL_FRect;
 begin
   len := LENGTH(outText);
+  CASE align of
+    TEXT_RIGHT :  begin x := x - (len * GLYPH_WIDTH);       end;
+    TEXT_CENTER : begin x := x - (len * GLYPH_WIDTH) DIV 2; end;
+  end;
   outText := UPCASE(outText);  { all capital letters }
   rect.w := GLYPH_WIDTH;
   rect.h := GLYPH_HEIGHT;
@@ -372,7 +535,7 @@ begin
     if (outText[i] IN [' '..'Z']) then
     begin
       rect.x := (ORD(outText[i]) - ORD(' ')) * GLYPH_WIDTH;
-      blitRect(fontTexture, @rect, x, y);
+      blitRectText(fontTexture, @rect, x, y);
       INC(x, GLYPH_WIDTH);
     end;
   end;
@@ -387,7 +550,9 @@ end;
 
 procedure initFonts;
 begin
-  fontTexture := loadTexture('gfx/font.png');
+  fontTexture := IMG_loadTexture(app.Renderer, Font_Path);
+  if fontTexture = NIL then
+    errorMessage(SDL_GetError());
 end;
 
 // **************   Background  ***************
@@ -403,7 +568,7 @@ begin
     dest.y := 0;
     dest.w := SCREEN_WIDTH;
     dest.h := SCREEN_HEIGHT;
-    SDL_RenderTexture(app.Renderer, background, NIL, @dest);
+    SDL_RenderTexture(app.Renderer, backgroundAtlas^.tex, @backgroundAtlas^.rec, @dest);
     x := x + SCREEN_WIDTH;
   end;
 end;
@@ -425,15 +590,15 @@ VAR i : integer;
 begin
   for i := 0 to PRED(MAX_STARS) do
   begin
-    DEC(stars[i].x, stars[i].speed);
-    if stars[i].x < 0 then
-      INC(stars[i].x, SCREEN_WIDTH);
+    stars[i].x := stars[i].x - stars[i].speed * app.deltatime;
+    if stars[i].x <= 0 then
+      stars[i].x := stars[i].x + SCREEN_WIDTH;
   end;
 end;
 
 procedure doBackGround;
 begin
-  DEC(backgroundX);
+  backgroundX := backgroundX - app.deltaTime;
   if backgroundX < (-SCREEN_WIDTH) then
     backgroundX := 0;
 end;
@@ -451,7 +616,7 @@ end;
 
 procedure initBackground;
 begin
-  background := loadTexture('gfx/background.png');
+  backgroundAtlas := getAtlasImage('gfx/background.png');
   backgroundX := 0;
 end;
 
@@ -459,23 +624,24 @@ end;
 
 procedure drawHud;
 begin
-  drawText(10, 10, 255, 255, 255, 'SCORE: ' + numberfill(stage.score));
+  drawText(SCREEN_WIDTH DIV 2, 10, 255, 255, 255, TEXT_CENTER, 'FPS: ' + numberfill(app.dev.TFPS));
+  drawText(10, 10, 255, 255, 255, TEXT_LEFT, 'SCORE: ' + numberfill(stage.score));
   if ((stage.score < HighScores[0].score))
-  then drawText(1020, 10, 255, 255, 255, 'HIGHSCORE: ' + numberfill(HighScores[0].score))
-  else drawText(1020, 10,   0, 255,   0, 'HIGHSCORE: ' + numberfill(stage.score));
+  then drawText(SCREEN_WIDTH - 10, 10, 255, 255, 255, TEXT_RIGHT, 'HIGHSCORE: ' + numberfill(HighScores[0].score))
+  else drawText(SCREEN_WIDTH - 10, 10,   0, 255,   0, TEXT_RIGHT, 'HIGHSCORE: ' + numberfill(stage.score));
 end;
 
 procedure drawExplosions;
 VAR e : PExplosion;
 begin
   SDL_SetRenderDrawBlendMode(app.Renderer, SDL_Blendmode_ADD);
-  SDL_SetTextureBlendMode(explosionTexture, SDL_Blendmode_ADD);
+  SDL_SetTextureBlendMode(explode, SDL_Blendmode_ADD);
   e := stage.explosionHead^.next;
   while (e <> NIL) do
   begin
-    SDL_SetTextureColorMod(explosionTexture, e^.r, e^.g, e^.b);
-    SDL_SetTextureAlphaMod(explosionTexture, e^.a);
-    blit(explosionTexture, e^.x, e^.y);
+    SDL_SetTextureColorMod(explode, e^.r, e^.g, e^.b);
+    SDL_SetTextureAlphaMod(explode, e^.a);
+    blit(explode, e^.x, e^.y);
     e := e^.next;
   end;
   SDL_SetRenderDrawBlendMode(app.Renderer, SDL_BLENDMODE_NONE);
@@ -498,7 +664,7 @@ begin
   b := stage.bulletHead^.next;
   while (b <> NIL) do
   begin
-    blit(b^.Texture, b^.x, b^.y);
+    blitAtlasImage(b^.Texture, b^.x, b^.y, 0);
     b := b^.next;
   end;
 end;
@@ -509,7 +675,7 @@ begin
   e := stage.fighterHead^.next;
   while (e <> NIL) do
   begin
-    blit(e^.Texture, e^.x, e^.y);
+    blitAtlasImage(e^.Texture, e^.x, e^.y, 0);
     e := e^.next;
   end;
 end;
@@ -520,14 +686,26 @@ begin
   p := stage.pointsHead^.next;
   while (p <> NIL) do
   begin
-    blit(p^.Texture, p^.x, p^.y);
+    if ((p^.health > (CFPS * 2)) OR ((p^.health MOD 12) < 6)) then
+      blitAtlasImage(p^.Texture, p^.x, p^.y, 0);
     p := p^.next;
   end;
 end;
 
+procedure draw_Game;
+begin
+  drawBackground;
+  drawStarfield;
+  drawPointsPods;
+  drawFighters;
+  drawDebris;
+  drawExplosions;
+  drawBullets;
+  drawHud;
+end;
+
 procedure addPointsPod(x, y : double);
 VAR e : PEntity;
-    dest : TSDL_FRect;
 begin
   NEW(e);
   initEntity(e);
@@ -537,11 +715,10 @@ begin
   e^.y := y;
   e^.dx := -1 * (RANDOM(RAND_MAX) MOD 5);
   e^.dy := (RANDOM(RAND_MAX) MOD 5) - (RANDOM(RAND_MAX) MOD 5);
-  e^.health := FPS * POINTSPOD_TIME;
-  e^.Texture := pointsTexture;
-  SDL_GetTextureSize(e^.Texture, @dest.w, @dest.h);
-  e^.w := dest.w;
-  e^.h := dest.h;
+  e^.health := CFPS * POINTSPOD_TIME;
+  e^.Texture := getAtlasImage('gfx/points.png');
+  e^.w := e^.texture^.rec.w;
+  e^.h := e^.texture^.rec.h;
   e^.x := e^.x - (e^.w / 2);
   e^.y := e^.y - (e^.h / 2);
 end;
@@ -550,8 +727,8 @@ procedure addDebris(e : PEntity);
 VAR d : PDebris;
     x, y, w, h : double;
 begin
-  w := e^.w / 2;
-  h := e^.h / 2;
+  w := e^.texture^.rec.w / 2;
+  h := e^.texture^.rec.h / 2;
   x := 0; y := 0;
   while y <= h do
   begin
@@ -565,16 +742,16 @@ begin
       d^.y := e^.y + (e^.h / 2);
       d^.dx := (RANDOM(RAND_MAX) MOD 5) - (RANDOM(RAND_MAX) MOD 5);
       d^.dy := -1 * (5 + (RANDOM(RAND_MAX) MOD 12));
-      d^.life := FPS * 2;
+      d^.life := CFPS * 2;
       d^.Texture := e^.Texture;
-      d^.rect.x := x;
-      d^.rect.y := y;
+      d^.rect.x := e^.texture^.rec.x + x;
+      d^.rect.y := e^.texture^.rec.y + y;
       d^.rect.w := w;
       d^.rect.h := h;
-      x := x + w;
-    end;
-    x := 0;
-    y := y + h;
+      x := x + w;  { Inkrement of x-loop }
+    end;           { end of while x loop }
+    x := 0;        { reset for the y loop }
+    y := y + h;    { Inkrement of y-loop }
   end;
 end;
 
@@ -604,7 +781,7 @@ begin
                 e^.g := 255;
                 e^.b := 255; end;
     end;   { end of CASE }
-    e^.a := (RANDOM(RAND_MAX) MOD (FPS * 3));
+    e^.a := (RANDOM(RAND_MAX) MOD (CFPS * 3));
   end;
 end;
 
@@ -619,16 +796,17 @@ begin
     if (e^.x + e^.w > SCREEN_WIDTH)  then begin e^.x := SCREEN_WIDTH - e^.w;  e^.dx := (-1 * e^.dx); end;
     if (e^.y < 0)                    then begin e^.y := 0;                    e^.dy := (-1 * e^.dy); end;
     if (e^.y + e^.h > SCREEN_HEIGHT) then begin e^.y := SCREEN_HEIGHT - e^.h; e^.dy := (-1 * e^.dy); end;
-    e^.x := e^.x + e^.dx;
-    e^.y := e^.y + e^.dy;
-    if (player <> NIL) AND collision(e^.x, e^.y, e^.w, e^.h, player^.x, player^.y, player^.w, player^.h) then
+    e^.x := e^.x + (e^.dx * app.deltatime);
+    e^.y := e^.y + (e^.dy * app.deltatime);
+    e^.health := MAX(e^.health - app.deltatime, 0);
+    if ((player <> NIL) AND collision(e^.x, e^.y, e^.w, e^.h, player^.x, player^.y, player^.w, player^.h)) then
     begin
       e^.health := 0;
       INC(stage.score);
       playSound(SND_POINTS, CH_POINTS);
     end;
-    DEC(e^.health);
-    if (e^.health <= 0) then
+
+    if (e^.health = 0) then
     begin
       if (e = stage.pointsTail) then
         stage.pointsTail := prev;
@@ -641,53 +819,6 @@ begin
   end;
 end;
 
-procedure draw_Game;
-begin
-  drawBackground;
-  drawStarfield;
-  drawPointsPods;
-  drawFighters;
-  drawDebris;
-  drawExplosions;
-  drawBullets;
-  drawHud;
-end;
-
-procedure clipPlayer;
-begin
-  if player <> NIL then
-  begin
-    if (player^.x < 0) then player^.x := 0;
-    if (player^.y < 0) then player^.y := 0;
-    if (player^.x > (SCREEN_WIDTH  - player^.w)) then player^.x := (SCREEN_WIDTH  - player^.w);
-    if (player^.y > (SCREEN_HEIGHT - player^.h)) then player^.y := (SCREEN_HEIGHT - player^.h);
-  end;
-end;
-
-procedure spawnEnemies;
-VAR dest : TSDL_FRect;
-begin
-  DEC(enemyspawnTimer);
-  if enemyspawnTimer <= 0 then
-  begin
-    NEW(enemy);
-    initEntity(enemy);
-    stage.fighterTail^.next := enemy;
-    stage.fighterTail := enemy;
-    enemy^.Texture := enemyTexture;
-    SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
-    enemy^.w := dest.w;
-    enemy^.h := dest.h;
-    enemy^.x := SCREEN_WIDTH;
-    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
-    enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
-    enemy^.side := SIDE_ALIEN;
-    enemy^.health := 1;
-    enemy^.reload := FPS * (1 + (RANDOM(RAND_MAX) MOD 3));
-    enemyspawnTimer := 30 + (RANDOM(RAND_MAX) MOD FPS);
-  end;
-end;
-
 procedure doDebris;
 VAR d, prev : PDebris;
 begin
@@ -695,11 +826,11 @@ begin
   d := stage.debrisHead^.next;
   while (d <> NIL) do
   begin
-    d^.x := d^.x + d^.dx;
-    d^.y := d^.y + d^.dy;
-    d^.dy := d^.dy + 0.5;
-    DEC(d^.life);
-    if (d^.life <= 0) then
+    d^.x := d^.x + (d^.dx * app.deltatime);
+    d^.y := d^.y + (d^.dy * app.deltatime);
+    d^.dy := d^.dy + (0.5 * app.deltatime);
+    d^.life := MAX(d^.life - app.deltatime, 0);
+    if (d^.life = 0) then
     begin
       if (d = stage.debrisTail) then
         stage.debrisTail := prev;
@@ -719,10 +850,10 @@ begin
   e := stage.ExplosionHead^.next;
   while (e <> NIL) do
   begin
-    e^.x := e^.x + e^.dx;
-    e^.y := e^.y + e^.dy;
-    DEC(e^.a);
-    if (e^.a <= 0) then
+    e^.x := e^.x + (e^.dx * app.deltatime);
+    e^.y := e^.y + (e^.dy * app.deltatime);
+    e^.a := TRUNC(MAX(e^.a - app.deltatime, 0));
+    if (e^.a = 0) then
     begin
       if (e = stage.ExplosionTail) then
         stage.ExplosionTail := prev;
@@ -735,11 +866,47 @@ begin
   end;
 end;
 
+procedure clipPlayer;
+begin
+  if player <> NIL then
+  begin
+    if (player^.x < 0) then player^.x := 0;
+    if (player^.y < 0) then player^.y := 0;
+    if (player^.x > (SCREEN_WIDTH  - player^.w)) then player^.x := (SCREEN_WIDTH  - player^.w);
+    if (player^.y > (SCREEN_HEIGHT - player^.h)) then player^.y := (SCREEN_HEIGHT - player^.h);
+  end;
+end;
+
+procedure spawnEnemies;
+begin
+  enemyspawnTimer := MAX(enemyspawnTimer - app.DeltaTime, 0);
+  if enemyspawnTimer = 0 then
+  begin
+    NEW(enemy);
+    initEntity(enemy);
+    stage.fighterTail^.next := enemy;
+    stage.fighterTail := enemy;
+
+    enemy^.Texture := getAtlasImage('gfx/enemy.png');
+    enemy^.w := enemy^.texture^.rec.w;
+    enemy^.h := enemy^.texture^.rec.h;
+    enemy^.x := SCREEN_WIDTH;
+    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
+    enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
+    enemy^.dy :=    -100 + (RANDOM(RAND_MAX) MOD 200);
+    enemy^.dy := enemy^.dy / 100;
+    enemy^.side := SIDE_ALIEN;
+    enemy^.health := 1;
+    enemy^.reload := CFPS * (1 + (RANDOM(RAND_MAX) MOD 3));
+    enemyspawnTimer := 30 + (RANDOM(RAND_MAX) MOD CFPS);
+  end;
+end;
+
 function bulletHitFighter(b : PEntity) : BOOLEAN;    { b = Bullet; f = Fighter }
 VAR f : PEntity;
 begin
-  f := stage.fighterHead^.next;
   bulletHitFighter := FALSE;
+  f := stage.fighterHead^.next;
   while (f <> NIL) do
   begin
     if (f^.side <> b^.side) then
@@ -748,6 +915,8 @@ begin
       begin
         b^.health := 0;
         f^.health := 0;
+        addExplosions(f^.x, f^.y, 32);
+        addDebris(f);
         if (f = player) then
         begin
           playSound(SND_PLAYER_DIE, CH_PLAYER);
@@ -757,8 +926,6 @@ begin
           addPointsPod(f^.x + (f^.w / 2), f^.y + (f^.h / 2));
           playSound(SND_ALIEN_DIE, CH_ANY);
         end;
-        addExplosions(f^.x, f^.y, 32);
-        addDebris(f);
         bulletHitFighter := TRUE;
       end;
     end;
@@ -773,8 +940,8 @@ begin
   b := stage.bulletHead^.next;
   while (b <> NIL) do
   begin
-    b^.x := b^.x + b^.dx;
-    b^.y := b^.y + b^.dy;
+    b^.x := b^.x + (b^.dx * app.deltatime);
+    b^.y := b^.y + (b^.dy * app.deltatime);
     if ((bulletHitFighter(b) = TRUE) OR (b^.x < -b^.w) OR (b^.y < -b^.h) OR
         (b^.x > SCREEN_WIDTH) OR (b^.y > SCREEN_HEIGHT)) then
     begin
@@ -796,8 +963,8 @@ begin
   e := stage.fighterHead^.next;
   while (e <> NIL) do
   begin
-    e^.x := e^.x + e^.dx;
-    e^.y := e^.y + e^.dy;
+    e^.x := e^.x + (e^.dx * app.deltatime);
+    e^.y := e^.y + (e^.dy * app.deltatime);
     if ((e <> player) AND (e^.x < -e^.w)) then
       e^.health := 0;
     if (e^.health = 0) then
@@ -816,7 +983,6 @@ begin
 end;
 
 procedure fireAlienbullet(e : PEntity);
-VAR dest : TSDL_FRect;
 begin
   NEW(bullet);
   initEntity(bullet);
@@ -825,17 +991,15 @@ begin
   bullet^.x := e^.x;
   bullet^.y := e^.y;
   bullet^.health := 1;
-  bullet^.Texture := alienbulletTexture;
-  SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := dest.w;
-  bullet^.h := dest.h;
+  bullet^.Texture := getAtlasImage('gfx/alienBullet.png');
+  bullet^.w := bullet^.texture^.rec.w;
+  bullet^.h := bullet^.texture^.rec.h;
   bullet^.x := bullet^.x + (e^.w / 2) - (bullet^.w / 2);
   bullet^.y := bullet^.y + (e^.h / 2) - (bullet^.h / 2);
-  calcSlope(player^.x + (player^.w / 2), player^.y + (player^.h / 2), e^.x, e^.y, bullet^.dx, bullet^.dy);
+  calcSlope((player^.x + (player^.w / 2)), (player^.y + (player^.h / 2)), e^.x, e^.y, bullet^.dx, bullet^.dy);
   bullet^.dx := bullet^.dx * ALIEN_BULLET_SPEED;
   bullet^.dy := bullet^.dy * ALIEN_BULLET_SPEED;
   bullet^.side := SIDE_ALIEN;
-  e^.reload := RANDOM(FPS * 2);
 end;
 
 procedure doEnemies;
@@ -844,12 +1008,14 @@ begin
   e := stage.fighterHead^.next;
   while (e <> NIL) do
   begin
-    if ((e <> player) AND (player <> NIL)) then
+    if (e <> player) then
     begin
-      DEC(e^.reload);
-      if (e^.reload <= 0) then
+      e^.y := MIN(MAX(e^.y, 0), (SCREEN_HEIGHT - e^.h));
+      e^.reload := MAX(e^.reload - app.deltatime, 0);
+      if ((player <> NIL) AND (e^.reload = 0)) then
       begin
         fireAlienbullet(e);
+        e^.reload := (RANDOM(RAND_MAX) MOD (CFPS * 2));
         playSound(SND_ALIEN_FIRE, CH_ALIEN_FIRE);
       end;
     end;
@@ -858,7 +1024,6 @@ begin
 end;
 
 procedure fireBullet;
-VAR dest : TSDL_FRect;
 begin
   NEW(bullet);
   initEntity(bullet);
@@ -868,10 +1033,9 @@ begin
   bullet^.y := player^.y;
   bullet^.dx := PLAYER_BULLET_SPEED;
   bullet^.health := 1;
-  bullet^.Texture := bulletTexture;
-  SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := TRUNC(dest.w);
-  bullet^.h := TRUNC(dest.h);
+  bullet^.Texture := getAtlasImage('gfx/playerBullet.png');
+  bullet^.w := bullet^.texture^.rec.w;
+  bullet^.h := bullet^.texture^.rec.h;
   bullet^.x := bullet^.x + (player^.w / 2);
   bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
   bullet^.side := SIDE_PLAYER;
@@ -884,12 +1048,13 @@ begin
   begin
     player^.dx := 0;
     player^.dy := 0;
-    if (player^.reload > 0) then DEC(player^.reload);
+    //if (player^.reload > 0) then
+    player^.reload := MAX(player^.reload - app.deltatime, 0);
     if (app.keyboard[SDL_ScanCode_UP]    OR app.keyboard[SDL_ScanCode_KP_8]) = 1 then player^.dy := (-1 * PLAYER_SPEED);
     if (app.keyboard[SDL_ScanCode_DOWN]  OR app.keyboard[SDL_ScanCode_KP_2]) = 1 then player^.dy :=       PLAYER_SPEED;
     if (app.keyboard[SDL_ScanCode_LEFT]  OR app.keyboard[SDL_ScanCode_KP_4]) = 1 then player^.dx := (-1 * PLAYER_SPEED);
     if (app.keyboard[SDL_ScanCode_RIGHT] OR app.keyboard[SDL_ScanCode_KP_6]) = 1 then player^.dx :=       PLAYER_SPEED;
-    if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload <= 0)) then
+    if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload = 0)) then
       begin fireBullet; playSound(SND_PLAYER_FIRE, CH_PLAYER); end;
   end;
 end;
@@ -914,8 +1079,8 @@ begin
   clipPlayer;
   if (player = NIL) then
   begin
-    DEC(resetTimer);
-    if (resetTimer <= 0) then
+    resetTimer := MAX(resetTimer - app.deltaTime, 0);
+    if (resetTimer = 0) then
     begin
       addHighScore(stage.score);
       initHighScore;
@@ -924,7 +1089,6 @@ begin
 end;
 
 procedure initPlayer;
-VAR dest : TSDL_FRect;
 begin
   NEW(player);
   initEntity(player);
@@ -933,10 +1097,9 @@ begin
   player^.health := 1;
   player^.x := 100;
   player^.y := 100;
-  player^.Texture := playerTexture;
-  SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := dest.w;
-  player^.h := dest.h;
+  player^.Texture := getAtlasImage('gfx/player.png');
+  player^.w := player^.texture^.rec.w;
+  player^.h := player^.texture^.rec.h;
   player^.side := SIDE_PLAYER;
 end;
 
@@ -1003,21 +1166,150 @@ procedure initStage;
 begin
   app.delegate.logic := @logic_Game;
   app.delegate.draw  := @draw_Game;
-  if bulletTexture = NIL      then bulletTexture      := loadTexture('gfx/playerBullet.png');
-  if enemyTexture = NIL       then enemyTexture       := loadTexture('gfx/enemy.png');
-  if alienbulletTexture = NIL then alienbulletTexture := loadTexture('gfx/alienBullet.png');
-  if playerTexture = NIL      then  playerTexture     := loadTexture('gfx/player.png');
-  if explosionTexture = NIL   then explosionTexture   := loadTexture('gfx/explosion.png');
-  if pointsTexture = NIL      then pointsTexture      := loadTexture('gfx/points.png');
+  explosionAtlas     := getAtlasImage('gfx/explosion.png');
+  explode            := SDL_CreateTexture(app.Renderer,SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, TRUNC(explosionAtlas^.rec.w), TRUNC(explosionAtlas^.rec.h));
+  SDL_SetRenderTarget(app.Renderer, explode);
+  SDL_RenderTexture(app.Renderer, explosionAtlas^.tex, @explosionAtlas^.rec, NIL);
+  SDL_SetRenderTarget(app.Renderer, NIL);
   FillChar(app.keyboard, SizeOf(app.Keyboard), 0);     { empty keyboard puffer }
   resetStage;
   stage.score := 0;
   initPlayer;
   enemyspawnTimer := 0;
-  resetTimer := FPS * 3;
+  resetTimer := CFPS * 3;
+end;
+
+//*****************  TITLE  **********************
+
+procedure drawLogo;     // with *blitAtlasImage* to draw
+VAR r : TSDL_FRect;
+begin
+  r.w := SDL2Texture^.rec.w;
+  SDL2Texture^.rec.h := MIN(reveal, r.w);
+  blitAtlasImage(sdl2Texture, (SCREEN_WIDTH DIV 2) - (r.w / 2), 100, 0);
+
+  r.w := ShooterTexture^.rec.w;
+  ShooterTexture^.rec.h := MIN(reveal, r.w);
+  blitAtlasImage(shooterTexture, (SCREEN_WIDTH DIV 2) - (r.w / 2), 250, 0);
+end;
+
+procedure draw_Title;
+begin
+  drawBackground;
+  drawStarfield;
+  drawLogo;
+  if (timeout MOD 40) < 20 then
+    drawText(SCREEN_WIDTH DIV 2, 600, 255, 255, 255, TEXT_CENTER, 'PRESS FIRE TO PLAY!');
+end;
+
+procedure logic_Title;
+begin
+  doBackGround;
+  doStarfield;
+  if (reveal < reveal_max) then
+    reveal := reveal + app.deltatime;
+  timeout := MAX(timeout - app.deltatime, 0);
+  if timeout = 0 then
+  begin
+    initHighScore;
+    reveal := 0;
+  end;
+  if (app.keyboard[SDL_ScanCode_LCTRL] = 1) then
+    initStage;
+end;
+
+procedure initTitle;
+begin
+  app.delegate.logic := @logic_Title;
+  app.delegate.draw  := @draw_Title;
+  FillChar(app.keyboard, SizeOf(app.Keyboard), 0);     { empty keyboard puffer }
+  SDL2Texture := getAtlasImage('gfx/sdl2.png');
+  shooterTexture := getAtlasImage('gfx/shooter.png');
+  reveal_max := ShooterTexture^.rec.h;
+  reveal := 0;
+  timeout := CFPS * 5;
 end;
 
 // ***************  HIGHSCORE  ****************
+
+procedure emptyHighScore;
+VAR i : integer;
+begin
+  for i := 0 to PRED(NUM_HighScores) do
+  begin
+    HighScores[i].score := NUM_HighScores - i;
+    HighScores[i].name := 'ANONYMOUS';
+  end;
+end;
+
+procedure readHighScore;
+VAR i : integer;
+    N, C : TJsonNode;
+begin
+  if FileExists(ScorePath) then
+  begin
+    N := TJsonNode.Create;
+    N.LoadFromFile(ScorePath);
+
+    if (N.Exists('Volume/sound')) then
+    begin
+      C := N.Find('Volume');
+      SoundVol := C.Find('sound').asInteger;
+      MusicVol := C.Find('music').asInteger;
+    end
+    else
+    begin
+      SoundVol := -1;
+      MusicVol := -1;
+    end;
+
+    C := N.Find('Highscore');
+    for i := 0 to 7 do
+    begin
+      HighScores[i].name  := C.Child(i).Child(0).asString;
+      HighScores[i].score := C.Child(i).Child(1).asInteger;
+    end;
+    N.Free;
+  end
+  else
+  begin
+    emptyHighScore;
+    SoundVol := -1;
+    MusicVol := -1;
+  end;
+end;
+
+procedure writeHighScore;
+VAR i : integer;
+    N : TJsonNode;
+begin
+  N := TJsonNode.Create;
+  if (SoundVol <> -1) OR (MusicVol <> -1) then
+  begin
+    N.Force('Volume').Add('sound',SoundVol);
+    N.Force('Volume').Add('music',MusicVol);
+  end;
+
+  for i := 0 to PRED(NUM_HighScores) do
+  begin
+    N.Force('Highscore').Add.Add('name', HighScores[i].name).Parent.Add('score:', HighScores[i].score);
+  end;
+  N.SaveToFile(ScorePath);
+  N.Free;
+end;
+
+{procedure writeHighScore;
+VAR i : integer;
+    N : TJsonNode;
+begin
+  N := TJsonNode.Create;
+  for i := 0 to PRED(NUM_HighScores) do
+  begin
+    N.Force('Highscore').Add.Add('name', HighScores[i].name).Parent.Add('score:', HighScores[i].score);
+  end;
+  N.SaveToFile(ScorePath);
+  N.Free;
+end;}
 
 procedure Order(VAR p, q : integer);
 VAR temp : integer;
@@ -1051,6 +1343,8 @@ begin
   begin
     newHighScores[k] := HighScores[k];
     newHighScores[k].recent := 0;
+    if ((newHighScores[k].score = score) AND (newHighScores[k].name = 'ANONYMOUS')) then
+      newHighScores[k].score := 0;   { erase the Anonymous - entry }
   end;
   newHighScores[NUM_HighScores].score := score;
   newHighScores[NUM_HighScores].recent := 1;
@@ -1060,63 +1354,140 @@ begin
   for k := 0 to PRED(NUM_HighScores) do
   begin
     HighScores[k] := newHighScores[k];
+    if (newHighScores[k].recent = 1) then
+    begin
+      HighScores[k].recent := 1;
+      newHighScoreFlag := TRUE;
+    end;
   end;
 end;
 
-procedure drawHighScores;
-VAR i, y : integer;
-    a : TString50;
+procedure doNameInput;
+VAR i, n, o : integer;
+    c : char;
 begin
+  n := LENGTH(newHighScore.name);
+  for i := 1 to LENGTH(app.inputText) do
+  begin
+    c := UPCASE(app.inputText[i]);
+    if ((n < PRED(MAX_SCORE_NAME_LENGTH)) AND (c IN [' '..'Z'])) then
+      newHighScore.name := newHighScore.name + c;
+  end;
+  if ((n > 0) AND (app.keyboard[SDL_SCANCODE_BACKSPACE] = 1)) then
+  begin
+    o := LENGTH(newHighScore.name);
+    newHighScore.name := LEFTSTR(newHighScore.name, o - 1);
+    app.Keyboard[SDL_SCANCODE_BACKSPACE] := 0;
+  end;
+  if (app.Keyboard[SDL_SCANCODE_RETURN] = 1) then
+  begin
+    if LENGTH(newHighScore.name) = 0 then
+      newHighScore.name := 'ANONYMOUS';
+    for i := 0 to PRED(NUM_HighScores) do
+    begin
+      if (HighScores[i].recent = 1) then
+      begin
+        HighScores[i].name := newHighScore.name;
+        newHighScore.name := '';
+      end;
+    end;
+    newHighScoreFlag := FALSE;
+  end;
+end;
+
+procedure drawNameInput;
+VAR r : TSDL_FRect;
+begin
+  drawText(SCREEN_WIDTH DIV 2,  70, 255, 255, 255, TEXT_CENTER, 'CONGRATULATIONS, YOU''VE GAINED A HIGHSCORE!');
+  drawText(SCREEN_WIDTH DIV 2, 120, 255, 255, 255, TEXT_CENTER, 'ENTER YOUR NAME BELOW:');
+  drawText(SCREEN_WIDTH DIV 2, 250, 128, 255, 128, TEXT_CENTER, newHighScore.name);
+  if (cursorBlink < (CFPS DIV  2)) then
+  begin
+    r.x := ((SCREEN_WIDTH DIV 2) + (LENGTH(newHighScore.name) * GLYPH_WIDTH) DIV 2) + 5;
+    r.y := 250;
+    r.w := GLYPH_WIDTH;
+    r.h := GLYPH_HEIGHT;
+    SDL_SetRenderDrawColor(app.Renderer, 0 , 255, 0, 255);
+    SDL_RenderFillRect(app.Renderer, @r);
+  end;
+  drawText(SCREEN_WIDTH DIV 2, 625, 255, 255, 255, TEXT_CENTER, 'PRESS RETURN WHEN FINISHED');
+end;
+
+procedure drawHighScores;
+VAR i, y, r, g, b, o : integer;
+  //p : TString16;
+    a, Fmt : TString50;
+begin
+//p := ' ............';
   y := 150;
-  drawText(425, 70, 255, 255, 255, 'HIGHSCORES');
+  drawText(SCREEN_WIDTH DIV 2, 70, 255, 255, 255, TEXT_CENTER, 'HIGHSCORES');
   for i := 0 to PRED(NUM_HighScores) do
   begin
-    a := '#' + IntToStr(i + 1) + ' ............ ' + numberfill(HighScores[i].score);
+    r := 255;
+    g := 255;
+    b := 255;
+//    o := LENGTH(HighScores[i].name);
+//    a := '#' + IntToStr(i + 1) + ' ' + HighScores[i].name  +
+//         LEFTSTR(p, (MAX_SCORE_NAME_LENGTH - o)) + '..... ' + numberfill(HighScores[i].score);
+    o := MAX_SCORE_NAME_LENGTH - LENGTH(HighScores[i].name) + 5;
+    Fmt := '[%s%.d %s %-*.*s %.3d]';
+    a := Format(Fmt, ['#',i + 1, HighScores[i].name, o, o, '....................',HighScores[i].score]);
     if HighScores[i].recent = 1 then
-    begin
-      drawText(425, y, 255, 255, 0, a);
-    end
-    else
-    begin
-      drawText(425, y, 255, 255, 255, a);
-    end;
+      b := 0;
+    drawText(SCREEN_WIDTH DIV 2, y, r, g, b, TEXT_CENTER, a);
     INC(y, 50);
   end;
-  drawtext(425, 600, 255, 255, 255, 'PRESS FIRE TO PLAY!');
+end;
+
+// *******  HIGHSCORE / TITLE LOGIC  **********
+
+procedure logic_HighSC;
+begin
+  doBackGround;
+  doStarfield;
+  if newHighScoreFlag = TRUE then
+    doNameInput
+  else
+  begin
+    timeout := MAX(timeout - app.deltatime, 0);
+    if timeout = 0 then
+      initTitle;
+    if (app.keyboard[SDL_ScanCode_LCTRL] = 1) then
+      initStage;
+  end;
+  cursorBlink := cursorBlink + app.deltatime;
+  if cursorBlink >= CFPS then
+    cursorBlink := 0;
 end;
 
 procedure draw_HighSC;
 begin
   drawBackground;
   drawStarField;
-  drawHighScores;
-end;
-
-procedure logic_HighSC;
-begin
-  doBackGround;
-  doStarfield;
-    if (app.keyboard[SDL_ScanCode_LCTRL] = 1) then
-    begin
-      initStage;
-    end;
+  if newHighScoreFlag = TRUE then
+    drawNameInput
+  else
+  begin
+    drawHighScores;
+    if ((timeout MOD 40) < 20) then
+      drawText(SCREEN_WIDTH DIV 2, 600, 255, 255, 255, TEXT_CENTER, 'PRESS FIRE TO PLAY!');
+  end;
 end;
 
 procedure initHighScore;
 begin
+  FillChar(app.keyboard, SizeOf(app.Keyboard), 0);     { empty keyboard puffer }
   app.delegate.logic := @logic_HighSC;
   app.delegate.draw  := @draw_HighSC;
-  FillChar(app.keyboard, SizeOf(app.Keyboard), 0);     { empty keyboard puffer }
+  timeout := CFPS * 5;
 end;
 
 procedure initHighScoreTable;
-VAR i : integer;
 begin
   FillChar(HighScores, SizeOf(THighScoreDef), 0);
-  for i := 0 to PRED(NUM_HighScores) do
-  begin
-    HighScores[i].score := NUM_HighScores - i;
-  end;
+  readHighScore;
+  newHighScoreFlag := FALSE;
+  cursorBlink := 0;
 end;
 
 // ***************   INIT SDL   ***************
@@ -1133,7 +1504,7 @@ begin
     errorMessage(SDL_GetError());
   Mix_AllocateChannels(MAX_SND_CHANNELS);
 
-  app.Window := SDL_CreateWindow('Shooter 13', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
+  app.Window := SDL_CreateWindow('Shooter 15', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
   if app.Window = NIL then
     errorMessage(SDL_GetError());
 
@@ -1146,10 +1517,10 @@ end;
 
 procedure initGame;
 begin
-  exitLoop   := FALSE;
-  gTicks     := SDL_GetTicks;
-  gRemainder := 0;
-  music      := NIL;
+  app.inputText    := '';
+  newHighScoreFlag := FALSE;
+  exitLoop         := FALSE;
+  music            := NIL;
   initStageListenPointer;
   initBackground;
   initStarfield;
@@ -1160,36 +1531,42 @@ begin
   playMusic(TRUE);
 end;
 
-procedure destroyTexture;
-VAR e, tex : PTextur;
+procedure emptyArray;
+VAR i : integer;
+    c, b : PAtlasImage;
 begin
-  tex := app.textureHead^.next;
-  while (tex <> NIL) do
+  for i := 0 to NUMATLASBUCKETS do
   begin
-    e := tex^.next;
-    DISPOSE(tex);
-    tex := e;
+    c := atlases[i]^.next;    // Dispose the list
+    while (c <> NIL) do
+    begin
+      b := c^.next;
+      DISPOSE(c);
+      c := b;
+    end;
+    DISPOSE(atlases[i]);      // Dispose element / header of the array
   end;
 end;
 
 procedure cleanUp;
+VAR i : byte;
 begin
+  SDL_DestroyTexture(atlasTex);
+  SDL_DestroyTexture(explode);
+  SDL_DestroyTexture(fontTexture);
+  writeHighScore;
+  emptyArray;
   resetStage;
   resetLists;
-  DISPOSE(stage.pointsHead);
-  DISPOSE(stage.debrisHead);
-  DISPOSE(stage.explosionHead);
-  DISPOSE(stage.fighterHead);
-  DISPOSE(stage.bulletHead);
-  destroyTexture;
-  DISPOSE(app.textureHead);
+  if stage.fighterHead   <> NIL then DISPOSE(stage.fighterHead);
+  if stage.bulletHead    <> NIL then DISPOSE(stage.bulletHead);
+  if stage.explosionHead <> NIL then DISPOSE(stage.explosionHead);
+  if stage.debrisHead    <> NIL then DISPOSE(stage.debrisHead);
+  if stage.pointsHead    <> NIL then DISPOSE(stage.pointsHead);
 
+  for i := 5 downto 1 do
+    Mix_FreeChunk(sounds[i]);
   Mix_FreeMusic(music);
-  Mix_FreeChunk(sounds[5]);
-  Mix_FreeChunk(sounds[4]);
-  Mix_FreeChunk(sounds[3]);
-  Mix_FreeChunk(sounds[2]);
-  Mix_FreeChunk(sounds[1]);
   if ExitCode <> 0 then WriteLn('CleanUp complete!');
 end;
 
@@ -1198,7 +1575,7 @@ begin
   if ExitCode <> 0 then cleanUp;
   Mix_CloseAudio;
   SDL_DestroyRenderer(app.Renderer);
-  SDL_DestroyWindow  (app.Window);
+  SDL_DestroyWindow (app.Window);
   MIX_Quit;   { Quits the Music / Sound }
   SDL_QuitSubSystem(SDL_INIT_VIDEO OR SDL_INIT_AUDIO);
   SDL_Quit;   { Quits the SDL }
@@ -1210,6 +1587,7 @@ end;
 
 procedure doInput;
 begin
+  app.inputText := '';
   while SDL_PollEvent(@Event) do
   begin
     CASE Event._Type of
@@ -1217,54 +1595,80 @@ begin
       SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
       SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
 
-      SDL_EVENT_KEY_DOWN: begin
-                            if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                              app.keyboard[Event.key.scancode] := 1;
-                            if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
-                          end;   { SDL_Keydown }
+      SDL_EVENT_KEY_DOWN:   begin
+                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                                app.keyboard[Event.key.scancode] := 1;
+                              if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
+                            end;   { SDL_Keydown }
 
-      SDL_EVENT_KEY_UP:   begin
-                            if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                              app.keyboard[Event.key.scancode] := 0;
-                          end;   { SDL_Keyup }
+      SDL_EVENT_KEY_UP:     begin
+                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                                app.keyboard[Event.key.scancode] := 0;
+                            end;   { SDL_Keyup }
+      SDL_EVENT_TEXT_INPUT: begin
+                              app.inputText := app.inputText + Event.Text.text;
+                            end;
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;
 
 // *************   CAPFRAMERATE   *************
 
-procedure CapFrameRate(VAR remainder : double; VAR Ticks : UInt32);
-VAR wait, FrameTime : longInt;
+procedure logic1;
+VAR tmpDelta : double;
 begin
-  wait := 16 + TRUNC(remainder);
-  remainder := remainder - TRUNC(remainder);
-  frameTime := SDL_GetTicks - Ticks;
-  DEC(wait, frameTime);
-  if (wait < 1) then wait := 1;
-  SDL_Delay(wait);
-  remainder := remainder + 0.667;
-  Ticks := SDL_GetTicks;
+  // don't exceed target logic rate
+  while (app.deltaTime > 1) do
+  begin
+    tmpDelta := app.deltaTime;
+    app.deltaTime := 1;
+    app.delegate.logic;
+    app.deltaTime := (tmpDelta - 1);
+  end;
+  app.delegate.logic;
+end;
+
+procedure doFPS;
+begin
+  INC(FPS);
+  if (SDL_GetTicks >= nextFPS) then
+  begin
+    app.dev.TFPS := FPS;
+    FPS := 0;
+    nextFPS := SDL_GetTicks + 1000;
+  end;
 end;
 
 // *****************   MAIN   *****************
 
 begin
   RANDOMIZE;
+  pathTest;
   InitSDL;
   AddExitProc(@AtExit);
+  initAtlas;
   initGame;
-  initHighScore;
+  initTitle;
+  FPS := 0;
+  app.deltatime := 0;
+  app.dev.TFPS := 0;
+  nextFPS := SDL_GetTicks + 1000;
+  SDL_StartTextInput(app.Window);
 
   while exitLoop = FALSE do
   begin
+    thentime := SDL_GetTicks;
     prepareScene;
     doInput;
-    app.delegate.logic;
+    logic1;
     app.delegate.draw;
     presentScene;
-    CapFrameRate(gRemainder, gTicks);
+    SDL_Delay(1);
+    app.deltaTime := LOGIC_RATE * (SDL_GetTicks - thentime);
+    doFPS;
   end;
 
+  SDL_StopTextInput(app.Window);
   cleanUp;
   AtExit;
 end.

@@ -39,8 +39,8 @@ TYPE TApp    = RECORD                       { "T" short for "TYPE" }
                  up, down, left, right, fire : integer;
                end;
      TEntity = RECORD
-                 x, y : double;
-                 dx, dy, health : integer;
+                 x, y, dx, dy : double;
+                 health : integer;
                  Texture : PSDL_Texture;
                end;
 
@@ -60,7 +60,7 @@ end;
 
 // *****************   DRAW   *****************
 
-procedure blit(Texture : PSDL_Texture; x, y : integer);
+procedure blit(Texture : PSDL_Texture; x, y : double);
 VAR dest : TSDL_FRect;
 begin
   dest.x := x;
@@ -115,6 +115,7 @@ begin
   SDL_DestroyTexture (player.Texture);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
+  SDL_QuitSubSystem(SDL_INIT_VIDEO);
   SDL_Quit;
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;
@@ -192,8 +193,8 @@ begin
     bullet.x := bullet.x + bullet.dx;
     bullet.y := bullet.y + bullet.dy;
     if (bullet.x > SCREEN_WIDTH) then bullet.health := 0;
-    blit(player.Texture, TRUNC(player.x), TRUNC(player.y));
-    if (bullet.health > 0) then blit(bullet.Texture, TRUNC(bullet.x), TRUNC(bullet.y));
+    blit(player.Texture, player.x, player.y);
+    if (bullet.health > 0) then blit(bullet.Texture, bullet.x, bullet.y);
     presentScene;
     SDL_Delay(16);
   end;
