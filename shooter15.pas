@@ -28,6 +28,11 @@ converted from "C" to "Pascal" by Ulrich 2021
 PROGRAM Shooter15;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
+
+{$IFDEF WINDOWS}
+crt,
+{$ENDIF}
+
 USES SDL3, SDL3_Image, SDL3_Mixer, Math, sysutils;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
@@ -45,19 +50,13 @@ CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       SIDE_ALIEN = 1;
       FPS = 60;
       MAX_STARS = 500;
-      MIX_MAX_Volume = 128;
 
-      MAX_SND_CHANNELS = 8;
-      SND_PLAYER_FIRE  = 1;
-      SND_ALIEN_FIRE   = 2;
-      SND_PLAYER_DIE   = 3;
-      SND_ALIEN_DIE    = 4;
-      SND_POINTS       = 5;
-      SND_MAX          = 6;
-      CH_ANY           = -1;
-      CH_PLAYER        = 0;
-      CH_ALIEN_FIRE    = 1;
-      CH_POINTS        = 2;
+      SND_PLAYER_FIRE  = 0;
+      SND_ALIEN_FIRE   = 1;
+      SND_PLAYER_DIE   = 2;
+      SND_ALIEN_DIE    = 3;
+      SND_POINTS       = 4;
+      MAX_Sound        = 5;
 
       GLYPH_HEIGHT     = 28;
       GLYPH_WIDTH      = 18;
@@ -84,8 +83,8 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
                    end;
      PEntity     = ^TEntity;
      TEntity     = RECORD
-                     x, y, w, h, dx, dy : double;
-                     health, reload, side : integer;
+                     x, y, dx, dy : double;
+                     w, h, health, reload, side : integer;
                      Texture : PSDL_Texture;
                      next : PEntity;
                    end;
@@ -114,6 +113,12 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
      TStar       = RECORD
                      x, y, speed : integer;
                    end;
+     TMix        = RECORD
+                     mixer: PMIX_Mixer;
+                     track: PMIX_Track;
+                     audio: PMIX_Audio;
+                   end;
+     PMix         = ^TMix;
      THighScoreDef = RECORD
                        name : TString16;
                        recent, score : integer;
@@ -150,18 +155,27 @@ VAR app                  : TApp;
     backgroundX,
     enemyspawnTimer,
     resetTimer           : integer;
+    option               : TSDL_PropertiesID;
+    S_Mix                : ARRAY[0..max_Sound] of PMix;
+    audiofname           : ARRAY[0..max_Sound] of PChar;
     stars                : ARRAY[0..MAX_STARS] OF TStar;
-    sounds               : ARRAY[1..SND_MAX] OF PMix_Chunk;
-    music                : PMix_Music;
     HighScores           : THighScoreARRAY;
     newHighScore         : THighScoreDef;
+
+{$IF DEFINED(UNIX)}
+procedure clrscr;
+begin
+  write(#27'[2J'#27'[1;1H');
+  //writeln ('Screen erased');
+end;
+{$ENDIF}
 
 // *****************   INIT   *****************
 
 procedure initEntity(e : PEntity);
 begin
-  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL; e^.side := 0;
-  e^.w := 0.0; e^.h := 0.0; e^.health := 0; e^.reload := 0; e^.next := NIL;
+  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL;  e^.side := 0;
+  e^.w := 0;   e^.h := 0;   e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
 procedure initDebris(e : PDebris);
@@ -198,16 +212,26 @@ begin
   initExplosion(stage.explosionHead);
   initDebris(stage.debrisHead);
   initEntity(stage.pointsHead);
+  initTex(app.textureHead);
 
-  app.textureTail     := app.textureHead;
-  stage.fighterTail := stage.fighterHead;
-  stage.bulletTail  := stage.bulletHead;
-  stage.explosionTail := stage.explosionHead;
-  stage.debrisTail  := stage.debrisHead;
-  stage.pointsTail  := stage.pointsHead;
+  app.textureTail      := app.textureHead;
+  stage.fighterTail    := stage.fighterHead;
+  stage.bulletTail     := stage.bulletHead;
+  stage.explosionTail  := stage.explosionHead;
+  stage.debrisTail     := stage.debrisHead;
+  stage.pointsTail     := stage.pointsHead;
 end;
 
 // *****************   UTIL   *****************
+
+{function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : BOOLEAN;
+VAR a_Rect, b_Rect : TSDL_Rect;
+begin
+  collision := FALSE;
+  a_Rect.x := ROUND(x1); a_Rect.y := ROUND(y1); a_Rect.w := ROUND(w1); a_Rect.h := ROUND(h1);
+  b_Rect.x := ROUND(x2); b_Rect.y := ROUND(y2); b_Rect.w := ROUND(w2); b_Rect.h := ROUND(h2);
+  if (SDL_HasIntersection(@a_Rect, @b_Rect) = SDL_TRUE) then collision := TRUE;
+end;  }
 
 function collision(x1, y1, w1, h1, x2, y2, w2, h2 : double) : Boolean;
 begin
@@ -217,7 +241,7 @@ end;
 procedure calcSlope(x1, y1, x2, y2 : double; VAR dx, dy : double);
 VAR steps : double;
 begin
-  steps := MAX(ABS(x1-x2), ABS(y1-y2));
+  steps := MAX(ABS((x1-x2)), ABS((y1-y2)));
   if steps <> 0.0 then
   begin
     dx := (x1 - x2) / steps;
@@ -236,11 +260,11 @@ begin
   HALT(1);
 end;
 
-procedure logMessage(Message1 : String);
+procedure logMessage(Message1 : string);
 VAR Fmt : PChar;
 begin
   Fmt := 'File not found: %s'#13;    // Formatstring und "ARRAY of const" als Parameteruebergabe in [ ]
-  SDL_Log(Fmt, PChar(Message1));
+  SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN, Fmt, PChar(Message1));
 end;
 
 // *****************   SOUND  *****************
@@ -248,49 +272,61 @@ end;
 procedure loadSounds;
 VAR i : byte;
 begin
-  sounds[1] := Mix_LoadWAV('sound/334227__jradcoolness__laser.ogg');
-  if sounds[1] = NIL then logMessage('Soundfile: "334227__jradcoolness__laser.ogg"');
-  sounds[2] := Mix_LoadWAV('sound/196914__dpoggioli__laser-gun.ogg');
-  if sounds[2] = NIL then logMessage('Soundfile: "196914__dpoggioli__laser-gun.ogg"');
-  sounds[3] := Mix_LoadWAV('sound/245372__quaker540__hq-explosion.ogg');
-  if sounds[3] = NIL then logMessage('Soundfile: "245372__quaker540__hq-explosion.ogg"');
-  sounds[4] := Mix_LoadWAV('sound/10 Guage Shotgun-SoundBible.com-74120584.ogg');
-  if sounds[4] = NIL then logMessage('Soundfile: "10 Guage Shotgun-SoundBible.com-74120584.ogg"');
-  sounds[5] := Mix_LoadWAV('sound/342749__rhodesmas__notification-01.ogg');
-  if sounds[5] = NIL then logMessage('Soundfile: "342749__rhodesmas__notification-01.ogg"');
+  audiofname[0] := 'sound/334227__jradcoolness__laser.ogg';
+  audiofname[1] := 'sound/196914__dpoggioli__laser-gun.ogg';
+  audiofname[2] := 'sound/245372__quaker540__hq-explosion.ogg';
+  audiofname[3] := 'sound/10 Guage Shotgun-SoundBible.com-74120584.ogg';
+  audiofname[4] := 'sound/342749__rhodesmas__notification-01.ogg';
+  audiofname[5] := 'music/Mercury.ogg';
 
-  for i := 1 to 5 do
-    Mix_VolumeChunk(sounds[i], MIX_MAX_VOLUME);
-end;
-
-procedure loadMusic;
-begin
-  if music <> NIL then
+  if not MIX_Init then
   begin
-    Mix_HaltMusic;
-    Mix_FreeMusic(music);
-    music := NIL;
+    SDL_Log('Couldn''t initialize SDL_mixer: %s', SDL_GetError);
+    Exit;
   end;
-  music := Mix_LoadMUS('music/Mercury.ogg');
-  if music = NIL then logMessage('Music: "Mercury.ogg"');
-  Mix_VolumeMusic(MIX_MAX_VOLUME);
+
+  for i:= 0 to max_Sound do
+  begin
+    S_Mix[i]^.mixer := MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nil);      // Mixer
+    if S_Mix[i]^.mixer = nil then
+    begin
+      SDL_Log('Couldn''t create mixer: %s', SDL_GetError);
+      Halt(SDL_APP_FAILURE);
+    end;
+
+    S_Mix[i]^.audio := MIX_LoadAudio(S_Mix[i]^.mixer, audiofname[i], True);
+    if S_Mix[i]^.audio = nil then
+    begin
+      SDL_Log('Couldn''t load audio from %s: %s', audiofname[i], SDL_GetError);
+      Halt(SDL_APP_FAILURE);
+    end;
+
+    S_Mix[i]^.track := MIX_CreateTrack(S_Mix[i]^.mixer);
+    if S_Mix[i]^.track = nil then
+    begin
+      SDL_Log('Couldn''t create track: %s', SDL_GetError);
+      Halt(SDL_APP_FAILURE);
+    end;
+
+    Mix_SetTrackGain(S_Mix[i]^.track, 0.95);                         // Sound volume
+
+    MIX_SetTrackAudio(S_Mix[i]^.track, S_Mix[i]^.audio);
+  end;
+
+  option := SDL_CreateProperties();
+  SDL_SetNumberProperty(option, MIX_PROP_PLAY_LOOPS_NUMBER, -1);     // Play sound in a loop
+
+  MIX_PlayTrack(S_Mix[5]^.track, option);
+  Mix_SetTrackGain(S_Mix[5]^.track, 1.5);                            // Music volume
 end;
 
-procedure playMusic(play : BOOLEAN);
-VAR m : integer;
+procedure playSound(id : Byte);
 begin
-  if play = TRUE then m := -1 else m := 0;
-  Mix_PlayMusic(music, m);
-end;
-
-procedure playSound(id, channel : integer);
-begin
-  Mix_PlayChannel(channel, sounds[id], 0);
+ { if NOT MIX_TrackPlaying(S_Mix[id]^.track) then} MIX_PlayTrack(S_Mix[id]^.track, 0);
 end;
 
 procedure initSounds;
 begin
-  Mix_Init(MIX_INIT_WAVPACK);
   loadSounds;
 end;
 
@@ -411,7 +447,7 @@ end;
 
 procedure drawBackground;
 VAR dest : TSDL_FRect;
-    x : double;
+    x : integer;
 begin
   x := backgroundX;
   while x < SCREEN_WIDTH do
@@ -421,7 +457,7 @@ begin
     dest.w := SCREEN_WIDTH;
     dest.h := SCREEN_HEIGHT;
     SDL_RenderTexture(app.Renderer, background, NIL, @dest);
-    x := x + SCREEN_WIDTH;
+    INC(x, SCREEN_WIDTH);
   end;
 end;
 
@@ -555,7 +591,7 @@ begin
   drawHud;
 end;
 
-procedure addPointsPod(x, y : double);
+procedure addPointsPod(x, y : integer);
 VAR e : PEntity;
     dest : TSDL_FRect;
 begin
@@ -570,18 +606,18 @@ begin
   e^.health := FPS * POINTSPOD_TIME;
   e^.Texture := pointsTexture;
   SDL_GetTextureSize(e^.Texture, @dest.w, @dest.h);
-  e^.w := dest.w;
-  e^.h := dest.h;
-  e^.x := e^.x - (e^.w / 2);
-  e^.y := e^.y - (e^.h / 2);
+  e^.w := TRUNC(dest.w);
+  e^.h := TRUNC(dest.h);
+  e^.x := e^.x - (e^.w DIV 2);
+  e^.y := e^.y - (e^.h DIV 2);
 end;
 
 procedure addDebris(e : PEntity);
 VAR d : PDebris;
-    x, y, w, h : double;
+    x, y, w, h : integer;
 begin
-  w := e^.w / 2;
-  h := e^.h / 2;
+  w := e^.w DIV 2;
+  h := e^.h DIV 2;
   x := 0; y := 0;
   while y <= h do
   begin
@@ -591,8 +627,8 @@ begin
       initDebris(d);
       stage.debrisTail^.next := d;
       stage.debrisTail := d;
-      d^.x := e^.x + (e^.w / 2);
-      d^.y := e^.y + (e^.h / 2);
+      d^.x := e^.x + (e^.w DIV 2);
+      d^.y := e^.y + (e^.h DIV 2);
       d^.dx := (RANDOM(RAND_MAX) MOD 5) - (RANDOM(RAND_MAX) MOD 5);
       d^.dy := -1 * (5 + (RANDOM(RAND_MAX) MOD 12));
       d^.life := FPS * 2;
@@ -601,10 +637,10 @@ begin
       d^.rect.y := y;
       d^.rect.w := w;
       d^.rect.h := h;
-      x := x + w;  { Inkrement of x-loop }
+      INC(x, w);   { Inkrement of x-loop }
     end;           { end of while x loop }
     x := 0;        { reset for the y loop }
-    y := y + h;    { Inkrement of y-loop }
+    INC(y, h);     { Inkrement of y-loop }
   end;
 end;
 
@@ -618,10 +654,10 @@ begin
     initExplosion(e);
     stage.explosionTail^.next := e;
     stage.explosionTail := e;
-    e^.x  := x + (RANDOM(RAND_MAX) MOD 32) - (RANDOM(RAND_MAX) MOD 32);
-    e^.y  := y + (RANDOM(RAND_MAX) MOD 32) - (RANDOM(RAND_MAX) MOD 32);
-    e^.dx :=     (RANDOM(RAND_MAX) MOD 10) - (RANDOM(RAND_MAX) MOD 10);
-    e^.dy :=     (RANDOM(RAND_MAX) MOD 10) - (RANDOM(RAND_MAX) MOD 10);
+    e^.x  := TRUNC(x) + (RANDOM(RAND_MAX) MOD 32) - (RANDOM(RAND_MAX) MOD 32);
+    e^.y  := TRUNC(y) + (RANDOM(RAND_MAX) MOD 32) - (RANDOM(RAND_MAX) MOD 32);
+    e^.dx :=            (RANDOM(RAND_MAX) MOD 10) - (RANDOM(RAND_MAX) MOD 10);
+    e^.dy :=            (RANDOM(RAND_MAX) MOD 10) - (RANDOM(RAND_MAX) MOD 10);
     e^.dx := e^.dx / 10;
     e^.dy := e^.dy / 10;
     CASE (RANDOM(RAND_MAX) MOD 4) of
@@ -652,11 +688,11 @@ begin
     e^.x := e^.x + e^.dx;
     e^.y := e^.y + e^.dy;
     DEC(e^.health);
-    if (player <> NIL) AND collision(e^.x, e^.y, e^.w, e^.h, player^.x, player^.y, player^.w, player^.h) then
+    if ((player <> NIL) AND collision(e^.x, e^.y, e^.w, e^.h, player^.x, player^.y, player^.w, player^.h)) then
     begin
       e^.health := 0;
       INC(stage.score);
-      playSound(SND_POINTS, CH_POINTS);
+      playSound(SND_POINTS);
     end;
     if (e^.health <= 0) then
     begin
@@ -741,10 +777,10 @@ begin
     stage.fighterTail := enemy;
     enemy^.Texture := enemyTexture;
     SDL_GetTextureSize(enemy^.Texture, @dest.w, @dest.h);
-    enemy^.w := dest.w;
-    enemy^.h := dest.h;
+    enemy^.w := TRUNC(dest.w);
+    enemy^.h := TRUNC(dest.h);
     enemy^.x := SCREEN_WIDTH;
-    enemy^.y := RANDOM(SCREEN_HEIGHT - TRUNC(enemy^.h));
+    enemy^.y := RANDOM(SCREEN_HEIGHT - enemy^.h);
     enemy^.dx := -1 * (2 + (RANDOM(RAND_MAX) MOD 4));
     enemy^.dy := -100 + (RANDOM(RAND_MAX) MOD 200);
     enemy^.dy := enemy^.dy / 100;
@@ -772,12 +808,12 @@ begin
         addDebris(f);
         if (f = player) then
         begin
-          playSound(SND_PLAYER_DIE, CH_PLAYER);
+          playSound(SND_PLAYER_DIE);
         end
         else
         begin
-          addPointsPod(f^.x + (f^.w / 2), f^.y + (f^.h / 2));
-          playSound(SND_ALIEN_DIE, CH_ANY);
+          addPointsPod(TRUNC(f^.x + (f^.w DIV 2)), TRUNC(f^.y + (f^.h DIV 2)));
+          playSound(SND_ALIEN_DIE);
         end;
         bulletHitFighter := TRUE;
       end;
@@ -847,11 +883,11 @@ begin
   bullet^.health := 1;
   bullet^.Texture := alienbulletTexture;
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
-  bullet^.w := dest.w;
-  bullet^.h := dest.h;
-  bullet^.x := bullet^.x + (e^.w / 2) - (bullet^.w / 2);
-  bullet^.y := bullet^.y + (e^.h / 2) - (bullet^.h / 2);
-  calcSlope(player^.x + (player^.w / 2), player^.y + (player^.h / 2), e^.x, e^.y, bullet^.dx, bullet^.dy);
+  bullet^.w := TRUNC(dest.w);
+  bullet^.h := TRUNC(dest.h);
+  bullet^.x := bullet^.x + (e^.w DIV 2) - (bullet^.w DIV 2);
+  bullet^.y := bullet^.y + (e^.h DIV 2) - (bullet^.h DIV 2);
+  calcSlope(player^.x + (player^.w DIV 2), player^.y + (player^.h DIV 2), e^.x, e^.y, bullet^.dx, bullet^.dy);
   bullet^.dx := bullet^.dx * ALIEN_BULLET_SPEED;
   bullet^.dy := bullet^.dy * ALIEN_BULLET_SPEED;
   bullet^.side := SIDE_ALIEN;
@@ -867,11 +903,11 @@ begin
     begin
       e^.y := MIN(MAX(e^.y, 0), (SCREEN_HEIGHT - e^.h));
       DEC(e^.reload);
-      if (player <> NIL) AND (e^.reload <= 0) then
+      if ((player <> NIL) AND (e^.reload <= 0)) then
       begin
         fireAlienbullet(e);
         e^.reload := (RANDOM(RAND_MAX) MOD (FPS * 2));
-        playSound(SND_ALIEN_FIRE, CH_ALIEN_FIRE);
+        playSound(SND_ALIEN_FIRE);
       end;
     end;
     e := e^.next;
@@ -893,8 +929,8 @@ begin
   SDL_GetTextureSize(bullet^.Texture, @dest.w, @dest.h);
   bullet^.w := TRUNC(dest.w);
   bullet^.h := TRUNC(dest.h);
-  bullet^.x := bullet^.x + (player^.w / 2);
-  bullet^.y := bullet^.y + (player^.h / 2) - (bullet^.h / 2);
+  bullet^.x := bullet^.x + (player^.w DIV 2);
+  bullet^.y := bullet^.y + (player^.h DIV 2) - (bullet^.h DIV 2);
   bullet^.side := SIDE_PLAYER;
   player^.reload := 8;
 end;
@@ -911,7 +947,7 @@ begin
     if (app.keyboard[SDL_ScanCode_LEFT]  OR app.keyboard[SDL_ScanCode_KP_4]) = 1 then player^.dx := (-1 * PLAYER_SPEED);
     if (app.keyboard[SDL_ScanCode_RIGHT] OR app.keyboard[SDL_ScanCode_KP_6]) = 1 then player^.dx :=       PLAYER_SPEED;
     if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload <= 0)) then
-      begin fireBullet; playSound(SND_PLAYER_FIRE, CH_PLAYER); end;
+      begin fireBullet; playSound(SND_PLAYER_FIRE); end;
   end;
 end;
 
@@ -956,13 +992,13 @@ begin
   player^.y := 100;
   player^.Texture := playerTexture;
   SDL_GetTextureSize(player^.Texture, @dest.w, @dest.h);
-  player^.w := dest.w;
-  player^.h := dest.h;
+  player^.w := TRUNC(dest.w);
+  player^.h := TRUNC(dest.h);
   player^.side := SIDE_PLAYER;
 end;
 
 procedure resetStage;
-VAR e, t : PEntity;
+VAR e, t  : PEntity;
 begin
   e := stage.fighterHead^.next;
   while (e <> NIL) do
@@ -1046,13 +1082,13 @@ begin
   r.x := 0;
   r.y := 0;
   SDL_GetTextureSize(SDL2Texture, @dest.w, @dest.h);
-  r.w := dest.w;
-  r.h := dest.h;
+  r.w := TRUNC(dest.w);
+  r.h := TRUNC(dest.h);
   r.h := MIN(reveal, r.h);
   blitRect(SDL2Texture, @r, (SCREEN_WIDTH DIV 2) - (r.w / 2), 100);
   SDL_GetTextureSize(shooterTexture, @dest.w, @dest.h);
-  r.w := dest.w;
-  r.h := dest.h;
+  r.w := TRUNC(dest.w);
+  r.h := TRUNC(dest.h);
   r.h := MIN(reveal, r.h);
   blitRect(shooterTexture, @r, (SCREEN_WIDTH DIV 2) - (r.w / 2), 250);
 end;
@@ -1285,16 +1321,20 @@ end;
 // ***************   INIT SDL   ***************
 
 procedure initSDL;
-VAR windowFlags : integer;
+VAR i, windowFlags : integer;
 begin
   windowFlags := 0;
 
   if NOT SDL_Init(SDL_INIT_VIDEO OR SDL_INIT_AUDIO) then
     errorMessage(SDL_GetError());
 
-  if MIX_OpenAudio(0, NIL) < 0 then
-    errorMessage(SDL_GetError());
-  Mix_AllocateChannels(MAX_SND_CHANNELS);
+  for i := 0 to max_Sound do
+  begin
+    S_Mix[i]  := SDL_malloc(SizeOf(TMix));
+    S_Mix[i]^ := Default(TMix);
+  end;
+
+  SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, '5');
 
   app.Window := SDL_CreateWindow('Shooter 15', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
   if app.Window = NIL then
@@ -1314,15 +1354,12 @@ begin
   exitLoop         := FALSE;
   gTicks           := SDL_GetTicks;
   gRemainder       := 0;
-  music            := NIL;
   initStageListenPointer;
   initBackground;
   initStarfield;
   initSounds;
   initFonts;
   initHighScoreTable;
-  loadMusic;
-  playMusic(TRUE);
 end;
 
 procedure destroyTexture;
@@ -1338,7 +1375,6 @@ begin
 end;
 
 procedure cleanUp;
-VAR i : byte;
 begin
   resetStage;
   resetLists;
@@ -1350,20 +1386,16 @@ begin
   destroyTexture;
   if app.textureHead     <> NIL then DISPOSE(app.textureHead);
 
-  for i := 5 downto 1 do
-    Mix_FreeChunk(sounds[i]);
-  Mix_FreeMusic(music);
   if ExitCode <> 0 then WriteLn('CleanUp complete!');
 end;
 
 procedure AtExit;
 begin
   if ExitCode <> 0 then cleanUp;
-  Mix_CloseAudio;
+  SDL_DestroyProperties(option);   //SDL3
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
   MIX_Quit;   { Quits the Music / Sound }
-  SDL_QuitSubSystem(SDL_INIT_VIDEO OR SDL_INIT_AUDIO);
   SDL_Quit;   { Quits the SDL }
   if Exitcode <> 0 then WriteLn(SDL_GetError());
   SDL_ShowCursor;
@@ -1378,22 +1410,22 @@ begin
   begin
     CASE Event._Type of
 
-      SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
+      SDL_EVENT_QUIT:          exitLoop := TRUE;        { close Window }
       SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
 
-      SDL_EVENT_KEY_DOWN:   begin
-                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                                app.keyboard[Event.key.scancode] := 1;
-                              if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
-                            end;   { SDL_Keydown }
+      SDL_EVENT_KEY_DOWN: begin
+                     if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                       app.keyboard[Event.key.scancode] := 1;
+                     if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
+                   end;   { SDL_Keydown }
 
-      SDL_EVENT_KEY_UP:     begin
-                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                                app.keyboard[Event.key.scancode] := 0;
-                            end;   { SDL_Keyup }
+      SDL_EVENT_KEY_UP:   begin
+                     if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                       app.keyboard[Event.key.scancode] := 0;
+                   end;   { SDL_Keyup }
       SDL_EVENT_TEXT_INPUT: begin
-                              app.inputText := app.inputText + Event.Text.text;
-                            end;
+                       app.inputText := app.inputText + Event.Text.text;
+                     end;
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;
@@ -1413,9 +1445,30 @@ begin
   Ticks := SDL_GetTicks;
 end;
 
+// *************   DELEGATE LOGIC   ***********
+
+{procedure delegate_logic(Wahl : TDelegating);
+begin
+  CASE Wahl of
+  Logo : begin
+           logic_Title;
+           draw_Title;
+         end;
+  HighSC : begin
+             logic_HighSC;
+             draw_HighSC;
+           end;
+  Game : begin
+           logic_Game;
+           draw_Game;
+         end;
+  end;
+end;}
+
 // *****************   MAIN   *****************
 
 begin
+  clrscr;
   RANDOMIZE;
   InitSDL;
   AddExitProc(@AtExit);

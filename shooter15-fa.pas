@@ -1,4 +1,4 @@
-{*****************************************************************************
+{**************************************************************************
 Copyright (C) 2015-2018 Parallel Realities
 
 This program is free software; you can redistribute it and/or
@@ -16,20 +16,25 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
-******************************************************************************
+***************************************************************************
 The original source and a lot of explanations can be found at:
 https://www.parallelrealities.co.uk/tutorials/#Shooter
 converted from "C" to "Pascal" by Ulrich 2021
-******************************************************************************
+***************************************************************************
 *** Title screen and finishing touches
 *** without memory holes; tested with: fpc -Criot -gl -gh shooter15-fa.pas
 *** shooter15-fa should run in it's own directory,
 *** or rename "Higscore.json" to "Highscore1.json" in line 71 for to have less problems... :)
-******************************************************************************}
+***************************************************************************}
 
 PROGRAM Shooter15_fps_atlas;
 {$mode FPC} {$H+}    { "$H+" necessary for conversion of String to PChar !!; H+ => AnsiString }
 {$COPERATORS OFF}
+
+{$IFDEF WINDOWS}
+crt,
+{$ENDIF}
+
 USES SDL3, SDL3_Image, SDL3_Mixer, Math, JsonTools, sysutils;
 
 CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
@@ -49,18 +54,12 @@ CONST SCREEN_WIDTH  = 1280;            { size of the grafic window }
       LOGIC_RATE = (cFPS / 1000);      { Logic_Rate => real number }
       MAX_STARS = 500;
 
-      MAX_SND_CHANNELS = 8;
-      SND_PLAYER_FIRE  = 1;
-      SND_ALIEN_FIRE   = 2;
-      SND_PLAYER_DIE   = 3;
-      SND_ALIEN_DIE    = 4;
-      SND_POINTS       = 5;
-      SND_MAX          = 6;
-      CH_ANY           = -1;
-      CH_PLAYER        = 0;
-      CH_ALIEN_FIRE    = 1;
-      CH_POINTS        = 2;
-      MIX_MAX_Volume   = 128;
+      SND_PLAYER_FIRE  = 0;
+      SND_ALIEN_FIRE   = 1;
+      SND_PLAYER_DIE   = 2;
+      SND_ALIEN_DIE    = 3;
+      SND_POINTS       = 4;
+      MAX_Sound        = 5;
 
       GLYPH_HEIGHT     = 28;
       GLYPH_WIDTH      = 18;
@@ -132,6 +131,12 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
                      x, y : double;
                      speed : integer;
                    end;
+     TMix        = RECORD
+                     mixer: PMIX_Mixer;
+                     track: PMIX_Track;
+                     audio: PMIX_Audio;
+                   end;
+     PMix         = ^TMix;
      THighScoreDef = RECORD
                        name : TString16;
                        recent, score : integer;
@@ -141,11 +146,11 @@ TYPE TDelegating = Procedure;               { "T" short for "TYPE" }
 
      TAlignment = (TEXT_LEFT, TEXT_CENTER, TEXT_RIGHT);
 
-VAR app              : TApp;
-    stage            : TStage;
+VAR app                : TApp;
+    stage              : TStage;
     player,
     enemy,
-    bullet           : PEntity;
+    bullet             : PEntity;
     explode,
     fontTexture,
     atlasTex         : PSDL_Texture;
@@ -154,9 +159,9 @@ VAR app              : TApp;
     ShooterTexture,
     backgroundAtlas,
     explosionAtlas   : PAtlasImage;
-    Event            : TSDL_EVENT;
+    Event              : TSDL_EVENT;
     newHighScoreFlag,
-    exitLoop         : BOOLEAN;
+    exitLoop           : BOOLEAN;
     FPS              : integer;
     thentime,
     nextFPS          : LongInt;
@@ -167,13 +172,22 @@ VAR app              : TApp;
     timeout,
     cursorBlink,
     backgroundX      : double;
+    option           : TSDL_PropertiesID;
+    S_Mix            : ARRAY[0..max_Sound] of PMix;
+    audiofname       : ARRAY[0..max_Sound] of PChar;
     stars            : ARRAY[0..MAX_STARS] OF TStar;
-    sounds           : ARRAY[1..SND_MAX] OF PMix_Chunk;
-    music            : PMix_Music;
     SoundVol         : integer;
     MusicVol         : integer;
     HighScores       : THighScoreARRAY;
     newHighScore     : THighScoreDef;
+
+{$IF DEFINED(UNIX)}
+procedure clrscr;
+begin
+  write(#27'[2J'#27'[1;1H');
+  //writeln ('Screen erased');
+end;
+{$ENDIF}
 
 // *****************   INIT   *****************
 
@@ -284,50 +298,62 @@ end;
 procedure loadSounds;
 VAR i : byte;
 begin
-  sounds[1] := Mix_LoadWAV('sound/334227__jradcoolness__laser.ogg');
-  if sounds[1] = NIL then logMessage('Soundfile: "334227__jradcoolness__laser.ogg"');
-  sounds[2] := Mix_LoadWAV('sound/196914__dpoggioli__laser-gun.ogg');
-  if sounds[2] = NIL then logMessage('Soundfile: "196914__dpoggioli__laser-gun.ogg"');
-  sounds[3] := Mix_LoadWAV('sound/245372__quaker540__hq-explosion.ogg');
-  if sounds[3] = NIL then logMessage('Soundfile: "245372__quaker540__hq-explosion.ogg"');
-  sounds[4] := Mix_LoadWAV('sound/10 Guage Shotgun-SoundBible.com-74120584.ogg');
-  if sounds[4] = NIL then logMessage('Soundfile: "10 Guage Shotgun-SoundBible.com-74120584.ogg"');
-  sounds[5] := Mix_LoadWAV('sound/342749__rhodesmas__notification-01.ogg');
-  if sounds[5] = NIL then logMessage('Soundfile: "342749__rhodesmas__notification-01.ogg"');
+audiofname[0] := 'sound/334227__jradcoolness__laser.ogg';
+audiofname[1] := 'sound/196914__dpoggioli__laser-gun.ogg';
+audiofname[2] := 'sound/245372__quaker540__hq-explosion.ogg';
+audiofname[3] := 'sound/10 Guage Shotgun-SoundBible.com-74120584.ogg';
+audiofname[4] := 'sound/342749__rhodesmas__notification-01.ogg';
+audiofname[5] := 'music/Mercury.ogg';
 
-  for i := 1 to 5 do
-    Mix_VolumeChunk(sounds[i], MIX_MAX_VOLUME);
+if not MIX_Init then
+begin
+SDL_Log('Couldn''t initialize SDL_mixer: %s', SDL_GetError);
+Exit;
 end;
 
-procedure loadMusic;
+for i:= 0 to max_Sound do
 begin
-  if music <> NIL then
-  begin
-    Mix_HaltMusic;
-    Mix_FreeMusic(music);
-    music := NIL;
-  end;
-  music := Mix_LoadMUS('music/Mercury.ogg');
-  if music = NIL then logMessage('Music: "Mercury.ogg"');
-  Mix_VolumeMusic(MIX_MAX_VOLUME);
+S_Mix[i]^.mixer := MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nil);      // Mixer
+if S_Mix[i]^.mixer = nil then
+begin
+SDL_Log('Couldn''t create mixer: %s', SDL_GetError);
+Halt(SDL_APP_FAILURE);
 end;
 
-procedure playMusic(play : BOOLEAN);
-VAR m : integer;
+S_Mix[i]^.audio := MIX_LoadAudio(S_Mix[i]^.mixer, audiofname[i], True);
+if S_Mix[i]^.audio = nil then
 begin
-  if play = TRUE then m := -1 else m := 0;
-  Mix_PlayMusic(music, m);
+SDL_Log('Couldn''t load audio from %s: %s', audiofname[i], SDL_GetError);
+Halt(SDL_APP_FAILURE);
 end;
 
-procedure playSound(id, channel : integer);
+S_Mix[i]^.track := MIX_CreateTrack(S_Mix[i]^.mixer);
+if S_Mix[i]^.track = nil then
 begin
-  Mix_PlayChannel(channel, sounds[id], 0);
+SDL_Log('Couldn''t create track: %s', SDL_GetError);
+Halt(SDL_APP_FAILURE);
+end;
+
+Mix_SetTrackGain(S_Mix[i]^.track, 0.95);                         // Sound volume
+
+MIX_SetTrackAudio(S_Mix[i]^.track, S_Mix[i]^.audio);
+end;
+
+option := SDL_CreateProperties();
+SDL_SetNumberProperty(option, MIX_PROP_PLAY_LOOPS_NUMBER, -1);     // Play sound in a loop
+
+MIX_PlayTrack(S_Mix[5]^.track, option);
+Mix_SetTrackGain(S_Mix[5]^.track, 1.5);                            // Music volume
+end;
+
+procedure playSound(id : Byte);
+begin
+ { if NOT MIX_TrackPlaying(S_Mix[id]^.track) then} MIX_PlayTrack(S_Mix[id]^.track, 0);
 end;
 
 procedure initSounds;
 begin
-  Mix_Init(MIX_INIT_WAVPACK);
-  loadSounds;
+loadSounds;
 end;
 
 // *****************   DRAW   *****************
@@ -803,7 +829,7 @@ begin
     begin
       e^.health := 0;
       INC(stage.score);
-      playSound(SND_POINTS, CH_POINTS);
+      playSound(SND_POINTS);
     end;
 
     if (e^.health = 0) then
@@ -919,12 +945,12 @@ begin
         addDebris(f);
         if (f = player) then
         begin
-          playSound(SND_PLAYER_DIE, CH_PLAYER);
+          playSound(SND_PLAYER_DIE);
         end
         else
         begin
           addPointsPod(f^.x + (f^.w / 2), f^.y + (f^.h / 2));
-          playSound(SND_ALIEN_DIE, CH_ANY);
+          playSound(SND_ALIEN_DIE);
         end;
         bulletHitFighter := TRUE;
       end;
@@ -1016,7 +1042,7 @@ begin
       begin
         fireAlienbullet(e);
         e^.reload := (RANDOM(RAND_MAX) MOD (CFPS * 2));
-        playSound(SND_ALIEN_FIRE, CH_ALIEN_FIRE);
+        playSound(SND_ALIEN_FIRE);
       end;
     end;
     e := e^.next;
@@ -1055,7 +1081,7 @@ begin
     if (app.keyboard[SDL_ScanCode_LEFT]  OR app.keyboard[SDL_ScanCode_KP_4]) = 1 then player^.dx := (-1 * PLAYER_SPEED);
     if (app.keyboard[SDL_ScanCode_RIGHT] OR app.keyboard[SDL_ScanCode_KP_6]) = 1 then player^.dx :=       PLAYER_SPEED;
     if ((app.keyboard[SDL_ScanCode_LCTRL] = 1) AND (player^.reload = 0)) then
-      begin fireBullet; playSound(SND_PLAYER_FIRE, CH_PLAYER); end;
+      begin fireBullet; playSound(SND_PLAYER_FIRE); end;
   end;
 end;
 
@@ -1493,16 +1519,20 @@ end;
 // ***************   INIT SDL   ***************
 
 procedure initSDL;
-VAR windowFlags : integer;
+VAR i, windowFlags : integer;
 begin
   windowFlags := 0;
 
   if NOT SDL_Init(SDL_INIT_VIDEO OR SDL_INIT_AUDIO) then
     errorMessage(SDL_GetError());
 
-  if MIX_OpenAudio(0, NIL) < 0 then
-    errorMessage(SDL_GetError());
-  Mix_AllocateChannels(MAX_SND_CHANNELS);
+  for i := 0 to max_Sound do
+  begin
+    S_Mix[i]  := SDL_malloc(SizeOf(TMix));
+    S_Mix[i]^ := Default(TMix);
+  end;
+
+  SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, '5');
 
   app.Window := SDL_CreateWindow('Shooter 15', SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
   if app.Window = NIL then
@@ -1520,15 +1550,12 @@ begin
   app.inputText    := '';
   newHighScoreFlag := FALSE;
   exitLoop         := FALSE;
-  music            := NIL;
   initStageListenPointer;
   initBackground;
   initStarfield;
   initSounds;
   initFonts;
   initHighScoreTable;
-  loadMusic;
-  playMusic(TRUE);
 end;
 
 procedure emptyArray;
@@ -1564,16 +1591,13 @@ begin
   if stage.debrisHead    <> NIL then DISPOSE(stage.debrisHead);
   if stage.pointsHead    <> NIL then DISPOSE(stage.pointsHead);
 
-  for i := 5 downto 1 do
-    Mix_FreeChunk(sounds[i]);
-  Mix_FreeMusic(music);
   if ExitCode <> 0 then WriteLn('CleanUp complete!');
 end;
 
 procedure AtExit;
 begin
   if ExitCode <> 0 then cleanUp;
-  Mix_CloseAudio;
+  SDL_DestroyProperties(option);   //SDL3
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow (app.Window);
   MIX_Quit;   { Quits the Music / Sound }
@@ -1642,6 +1666,7 @@ end;
 // *****************   MAIN   *****************
 
 begin
+  clrscr;
   RANDOMIZE;
   pathTest;
   InitSDL;
