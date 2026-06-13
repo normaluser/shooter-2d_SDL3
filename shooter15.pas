@@ -174,7 +174,7 @@ end;
 
 procedure initEntity(e : PEntity);
 begin
-  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL;  e^.side := 0;
+  e^.x := 0.0; e^.y := 0.0; e^.dx := 0.0;   e^.dy := 0.0;   e^.Texture := NIL; e^.side := 0;
   e^.w := 0;   e^.h := 0;   e^.health := 0; e^.reload := 0; e^.next := NIL;
 end;
 
@@ -214,12 +214,12 @@ begin
   initEntity(stage.pointsHead);
   initTex(app.textureHead);
 
-  app.textureTail      := app.textureHead;
-  stage.fighterTail    := stage.fighterHead;
-  stage.bulletTail     := stage.bulletHead;
-  stage.explosionTail  := stage.explosionHead;
-  stage.debrisTail     := stage.debrisHead;
-  stage.pointsTail     := stage.pointsHead;
+  app.textureTail     := app.textureHead;
+  stage.fighterTail   := stage.fighterHead;
+  stage.bulletTail    := stage.bulletHead;
+  stage.explosionTail := stage.explosionHead;
+  stage.debrisTail    := stage.debrisHead;
+  stage.pointsTail    := stage.pointsHead;
 end;
 
 // *****************   UTIL   *****************
@@ -241,7 +241,7 @@ end;
 procedure calcSlope(x1, y1, x2, y2 : double; VAR dx, dy : double);
 VAR steps : double;
 begin
-  steps := MAX(ABS((x1-x2)), ABS((y1-y2)));
+  steps := MAX(ABS(x1-x2), ABS(y1-y2));
   if steps <> 0.0 then
   begin
     dx := (x1 - x2) / steps;
@@ -260,11 +260,11 @@ begin
   HALT(1);
 end;
 
-procedure logMessage(Message1 : string);
+procedure logMessage(Message1 : String);
 VAR Fmt : PChar;
 begin
   Fmt := 'File not found: %s'#13;    // Formatstring und "ARRAY of const" als Parameteruebergabe in [ ]
-  SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_WARN, Fmt, PChar(Message1));
+  SDL_Log(Fmt, PChar(Message1));
 end;
 
 // *****************   SOUND  *****************
@@ -285,7 +285,7 @@ begin
     Exit;
   end;
 
-  for i:= 0 to max_Sound do
+  for i := 0 to max_Sound do
   begin
     S_Mix[i]^.mixer := MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nil);      // Mixer
     if S_Mix[i]^.mixer = nil then
@@ -317,10 +317,10 @@ begin
   SDL_SetNumberProperty(option, MIX_PROP_PLAY_LOOPS_NUMBER, -1);     // Play sound in a loop
 
   MIX_PlayTrack(S_Mix[5]^.track, option);
-  Mix_SetTrackGain(S_Mix[5]^.track, 1.5);                            // Music volume
+  Mix_SetTrackGain(S_Mix[5]^.track, 1.0);                            // Music volume
 end;
 
-procedure playSound(id : Byte);
+procedure playSound(id : byte);
 begin
  { if NOT MIX_TrackPlaying(S_Mix[id]^.track) then} MIX_PlayTrack(S_Mix[id]^.track, 0);
 end;
@@ -637,10 +637,10 @@ begin
       d^.rect.y := y;
       d^.rect.w := w;
       d^.rect.h := h;
-      INC(x, w);   { Inkrement of x-loop }
-    end;           { end of while x loop }
+      INC(x, w);   { Inkrement of x-loop  }
+    end;           { end of while x loop  }
     x := 0;        { reset for the y loop }
-    INC(y, h);     { Inkrement of y-loop }
+    INC(y, h);     { Inkrement of y-loop  }
   end;
 end;
 
@@ -998,7 +998,7 @@ begin
 end;
 
 procedure resetStage;
-VAR e, t  : PEntity;
+VAR e, t : PEntity;
 begin
   e := stage.fighterHead^.next;
   while (e <> NIL) do
@@ -1392,7 +1392,7 @@ end;
 procedure AtExit;
 begin
   if ExitCode <> 0 then cleanUp;
-  SDL_DestroyProperties(option);   //SDL3
+  SDL_DestroyProperties(option);
   SDL_DestroyRenderer(app.Renderer);
   SDL_DestroyWindow  (app.Window);
   MIX_Quit;   { Quits the Music / Sound }
@@ -1410,22 +1410,22 @@ begin
   begin
     CASE Event._Type of
 
-      SDL_EVENT_QUIT:          exitLoop := TRUE;        { close Window }
+      SDL_EVENT_QUIT:              exitLoop := TRUE;        { close Window }
       SDL_EVENT_MOUSE_BUTTON_DOWN: exitLoop := TRUE;        { if Mousebutton pressed }
 
-      SDL_EVENT_KEY_DOWN: begin
-                     if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                       app.keyboard[Event.key.scancode] := 1;
-                     if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
-                   end;   { SDL_Keydown }
+      SDL_EVENT_KEY_DOWN:   begin
+                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                                app.keyboard[Event.key.scancode] := 1;
+                              if (app.keyboard[SDL_ScanCode_ESCAPE]) = 1 then exitLoop := TRUE;
+                            end;   { SDL_Keydown }
 
-      SDL_EVENT_KEY_UP:   begin
-                     if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
-                       app.keyboard[Event.key.scancode] := 0;
-                   end;   { SDL_Keyup }
+      SDL_EVENT_KEY_UP:     begin
+                              if (Event.key.scancode < MAX_KEYBOARD_KEYS) then
+                                app.keyboard[Event.key.scancode] := 0;
+                            end;   { SDL_Keyup }
       SDL_EVENT_TEXT_INPUT: begin
-                       app.inputText := app.inputText + Event.Text.text;
-                     end;
+                              app.inputText := app.inputText + Event.Text.text;
+                            end;
     end;  { CASE Event }
   end;    { SDL_PollEvent }
 end;

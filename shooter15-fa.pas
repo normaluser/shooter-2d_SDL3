@@ -153,33 +153,33 @@ VAR app                : TApp;
     bullet             : PEntity;
     explode,
     fontTexture,
-    atlasTex         : PSDL_Texture;
-    atlases          : AtlasArr;
+    atlasTex           : PSDL_Texture;
+    atlases            : AtlasArr;
     SDL2Texture,
     ShooterTexture,
     backgroundAtlas,
-    explosionAtlas   : PAtlasImage;
+    explosionAtlas     : PAtlasImage;
     Event              : TSDL_EVENT;
     newHighScoreFlag,
     exitLoop           : BOOLEAN;
-    FPS              : integer;
+    FPS                : integer;
     thentime,
-    nextFPS          : LongInt;
+    nextFPS            : LongInt;
     resetTimer,
     enemyspawnTimer,
     reveal,
     reveal_max,
     timeout,
     cursorBlink,
-    backgroundX      : double;
-    option           : TSDL_PropertiesID;
-    S_Mix            : ARRAY[0..max_Sound] of PMix;
-    audiofname       : ARRAY[0..max_Sound] of PChar;
-    stars            : ARRAY[0..MAX_STARS] OF TStar;
-    SoundVol         : integer;
-    MusicVol         : integer;
-    HighScores       : THighScoreARRAY;
-    newHighScore     : THighScoreDef;
+    backgroundX        : double;
+    option             : TSDL_PropertiesID;
+    S_Mix              : ARRAY[0..max_Sound] of PMix;
+    audiofname         : ARRAY[0..max_Sound] of PChar;
+    stars              : ARRAY[0..MAX_STARS] OF TStar;
+    SoundVol           : integer;
+    MusicVol           : integer;
+    HighScores         : THighScoreARRAY;
+    newHighScore       : THighScoreDef;
 
 {$IF DEFINED(UNIX)}
 procedure clrscr;
@@ -343,7 +343,7 @@ option := SDL_CreateProperties();
 SDL_SetNumberProperty(option, MIX_PROP_PLAY_LOOPS_NUMBER, -1);     // Play sound in a loop
 
 MIX_PlayTrack(S_Mix[5]^.track, option);
-Mix_SetTrackGain(S_Mix[5]^.track, 1.5);                            // Music volume
+Mix_SetTrackGain(S_Mix[5]^.track, 1.0);                            // Music volume
 end;
 
 procedure playSound(id : Byte);
@@ -1312,8 +1312,8 @@ begin
   N := TJsonNode.Create;
   if (SoundVol <> -1) OR (MusicVol <> -1) then
   begin
-    N.Force('Volume').Add('sound',SoundVol);
-    N.Force('Volume').Add('music',MusicVol);
+    N.Force('Volume').Add('sound', SoundVol);
+    N.Force('Volume').Add('music', MusicVol);
   end;
 
   for i := 0 to PRED(NUM_HighScores) do
